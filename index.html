@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Computação Gráfica — Trabalho Final</title>
+  <meta name="description" content="Projeto interativo de Computação Gráfica com 6 cenas WebGL demonstrando transformações, iluminação Phong, shaders, ray casting, CSG e ray marching." />
+  <link rel="stylesheet" href="style.css" />
+  <!-- p5.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.1/p5.min.js"></script>
+  <!-- Utilitários -->
+  <script src="lib/colorpicker.js"></script>
+  <!-- Cenas (ordem não importa, são funções declaradas) -->
+  <script src="scenes/scene1_geometry.js"></script>
+  <script src="scenes/scene2_phong.js"></script>
+  <script src="scenes/scene3_textures.js"></script>
+  <script src="scenes/scene4_csg.js"></script>
+  <script src="scenes/scene5_raymarching.js"></script>
+  <script src="scenes/scene6_curves.js"></script>
+  <!-- Controlador principal -->
+  <script src="sketch.js"></script>
+</head>
+<body>
+  <!-- HUD Overlay (HTML para contornar a limitação do text() do p5.js WebGL) -->
+  <div id="hud-overlay">
+    <div id="hud-content"></div>
+  </div>
+  <div id="hud-meta">
+    <div id="hud-scene-indicator"></div>
+    <div id="hud-fps"></div>
+  </div>
+</body>
+</html>
