@@ -1,6 +1,8 @@
 // ============================================================
 // CENA 2: O Modelo de Phong e Materiais
 // Conceitos: Luz Ambiente, Difusa Lambertiana, Especular, Emissivo
+// Cada objeto controla uma componente: esfera = difusa, torus =
+// especular, cubo = ambiente/emissivo (interruptor da sala e lâmpada).
 // ============================================================
 
 let cena2 = {
@@ -9,7 +11,7 @@ let cena2 = {
   shininessLevel: 0,        // Índice no array de shininess
   shininessValues: [2, 8, 32, 128, 512, 1024, 2048, 0], // 0 = especular desligado
   pontualAngulo: 0,         // Ângulo orbital da luz pontual
-  boxColorBlue: false,      // Toggle cor da caixa
+  cuboModo: 0,              // 0=ambiente acesa, 1=ambiente apagada, 2=cubo-lâmpada
   portalPulse: 0,
 };
 
@@ -22,9 +24,13 @@ function drawCena2() {
 
   // --- Iluminação ---
 
-  // Sempre: luz ambiente fraca (baixa de propósito, para dramatizar o
-  // salto de luminância quando a difusa é ligada).
-  ambientLight(35, 35, 50);
+  // Luz ambiente fraca (baixa de propósito, para dramatizar o salto de
+  // luminância quando a difusa é ligada). O CUBO é o interruptor dela:
+  // nos modos 1 e 2 a componente ambiente some da equação de Phong e os
+  // objetos sem luz direta ficam pretos.
+  if (cena2.cuboModo === 0) {
+    ambientLight(35, 35, 50);
+  }
 
   // Se difusa ativa: luz direcional
   if (cena2.difusaAtiva) {
@@ -53,6 +59,15 @@ function drawCena2() {
     pop();
   }
 
+  // Modo 2: o cubo vira uma LÂMPADA — material emissivo + pointLight REAL
+  // na posição dele (140, 0, 0). Didática: no Phong, material emissivo
+  // sozinho NÃO ilumina os vizinhos; quem ilumina é a luz pontual.
+  let lampPulse = 0;
+  if (cena2.cuboModo === 2) {
+    lampPulse = 0.85 + 0.15 * sin(frameCount * 0.05);
+    pointLight(255 * lampPulse, 190 * lampPulse, 110 * lampPulse, 140, 0, 0);
+  }
+
   // =========================================
   // OBJETO 1: ESFERA (Reflexão Difusa)
   // =========================================
@@ -64,7 +79,9 @@ function drawCena2() {
     specularMaterial(100, 150, 220);
     shininess(1);
   } else {
-    // Apenas ambiente: aparência "chapada"
+    // Apenas ambiente: aparência "chapada". O fill define a refletância
+    // DIFUSA (sem ele, ficaria branca sob a luz do cubo-lâmpada).
+    fill(100, 150, 220);
     ambientMaterial(100, 150, 220);
   }
   noStroke();
@@ -88,6 +105,7 @@ function drawCena2() {
     specularMaterial(220, 180, 100);
     shininess(1);
   } else {
+    fill(220, 180, 100); // refletância difusa (cor sob o cubo-lâmpada)
     ambientMaterial(220, 180, 100);
   }
   noStroke();
@@ -95,7 +113,7 @@ function drawCena2() {
   pop();
 
   // =========================================
-  // OBJETO 3: CAIXA EMISSIVA (Toggle Cor)
+  // OBJETO 3: CUBO — interruptor da AMBIENTE / lâmpada EMISSIVA
   // =========================================
   push();
   translate(140, 0, 0);
@@ -103,17 +121,24 @@ function drawCena2() {
   rotateY(frameCount * 0.01);
   rotateX(frameCount * 0.007);
 
-  // Material emissivo: brilha independente de iluminação
-  if (cena2.boxColorBlue) {
-    emissiveMaterial(50, 150, 255);
-    specularMaterial(60, 160, 255);
+  if (cena2.cuboModo === 2) {
+    // Lâmpada: emissivo pulsante (brilha por si só, sem depender de luz).
+    // A pointLight correspondente já foi declarada no bloco de luzes.
+    emissiveMaterial(255 * lampPulse, 170 * lampPulse, 80 * lampPulse);
+    noStroke();
   } else {
-    emissiveMaterial(255, 100, 50);
-    specularMaterial(255, 120, 60);
+    // Material comum (ambiente + difusa + especular). No modo 1, sem a
+    // luz ambiente, o cubo fica PRETO — o contorno sutil ajuda a achá-lo.
+    fill(255, 140, 60);
+    ambientMaterial(255, 140, 60);
+    specularMaterial(255, 160, 80);
+    shininess(40);
+    if (cena2.cuboModo === 1) {
+      stroke(70, 75, 100);
+    } else {
+      noStroke();
+    }
   }
-  shininess(40);
-
-  noStroke();
   box(50);
   pop();
 
@@ -141,6 +166,7 @@ function drawCena2() {
   push();
   translate(0, 100, 0);
   rotateX(PI / 2);
+  fill(40, 40, 50); // refletância difusa (cor sob o cubo-lâmpada)
   ambientMaterial(40, 40, 50);
   noStroke();
   plane(600, 600);
@@ -194,7 +220,8 @@ function clickCena2(pickedID) {
     // Ciclar shininess a cada clique
     cena2.shininessLevel = (cena2.shininessLevel + 1) % cena2.shininessValues.length;
   } else if (pickedID === 3) {
-    cena2.boxColorBlue = !cena2.boxColorBlue;
+    // Cicla os 3 modos do cubo: ambiente acesa → apagada → lâmpada
+    cena2.cuboModo = (cena2.cuboModo + 1) % 3;
   } else if (pickedID === 10) {
     iniciarTransicao(3);
   }
@@ -206,18 +233,34 @@ function getHUDCena2() {
   lines.push("");
 
   let shin = cena2.especularAtiva ? cena2.shininessValues[cena2.shininessLevel] : -1;
-  let componentes = ["Ambiente"];
+  let especularOn = cena2.especularAtiva && shin > 0;
+
+  let componentes = [];
+  if (cena2.cuboModo === 0) componentes.push("Ambiente");
   if (cena2.difusaAtiva) componentes.push("Difusa (Lambert)");
-  if (cena2.especularAtiva && shin > 0) componentes.push("Especular");
-  lines.push("Iluminação: " + componentes.join(" + "));
+  if (especularOn) componentes.push("Especular");
+  if (cena2.cuboModo === 2) componentes.push("Pontual (cubo-lâmpada)");
+  lines.push("Iluminação: " + (componentes.length ? componentes.join(" + ") : "Nenhuma — tudo no escuro"));
   if (cena2.especularAtiva) {
     lines.push("Shininess atual: " + (shin === 0 ? "0 (especular desligado)" : shin));
   }
+
+  let modosCubo = [
+    "material comum (ambiente acesa)",
+    "ambiente APAGADA — cubo comum fica preto",
+    "LÂMPADA — emissivo + luz pontual real",
+  ];
+  lines.push("Cubo: " + modosCubo[cena2.cuboModo]);
   lines.push("");
   lines.push("▶ Clique na esfera: luz direcional (difusa)");
   lines.push("▶ Clique no torus: luz pontual + especular");
   lines.push("   (cliques repetidos alteram shininess)");
-  lines.push("▶ Clique na caixa: alternar cor emissiva");
+  lines.push("▶ Clique no cubo: ambiente → escuro → lâmpada");
+  if (cena2.cuboModo === 1) {
+    lines.push("   Sem ambiente, só sobra luz direta (difusa/especular)");
+  } else if (cena2.cuboModo === 2) {
+    lines.push("   Emissivo não ilumina vizinhos; a pointLight sim");
+  }
   lines.push("▶ Clique na seta verde (dir.): portal →");
   return lines;
 }

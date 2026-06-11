@@ -112,10 +112,6 @@ function drawCena1() {
     );
   }
 
-  // Gizmo de eixos XYZ — referencial da cena. Desenhado após a matriz
-  // do Arcball, então gira junto com a cena (ajuda a entender a rotação).
-  drawAxisGizmo(70);
-
   // =========================================
   // OBJETO 1: CUBO (Transformações Afins)
   // =========================================
@@ -362,22 +358,5 @@ function getHUDCena1() {
   lines.push("▶ Clique no cone: perspectiva + arcball");
   lines.push("▶ Clique na esfera roxa: wireframe");
   lines.push("▶ Clique na seta verde (dir.): portal →");
-  lines.push("   Eixos: X=vermelho · Y=verde · Z=azul");
   return lines;
-}
-
-/**
- * Desenha um gizmo de eixos a partir da origem (X=vermelho, Y=verde,
- * Z=azul). Nota: em p5 (WebGL) o eixo +Y aponta para BAIXO na tela.
- * Não entra no buffer de picking (puramente visual/didático).
- */
-function drawAxisGizmo(len) {
-  push();
-  strokeWeight(3);
-  stroke(255, 70, 70); line(0, 0, 0, len, 0, 0); // X
-  stroke(70, 230, 90); line(0, 0, 0, 0, len, 0); // Y (+Y é para baixo)
-  stroke(90, 140, 255); line(0, 0, 0, 0, 0, len); // Z
-  strokeWeight(1);
-  noStroke();
-  pop();
 }

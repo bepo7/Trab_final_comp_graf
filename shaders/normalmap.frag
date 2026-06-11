@@ -10,11 +10,13 @@ varying vec3 vNormal;
 varying vec2 vTexCoord;
 
 uniform sampler2D uNormalMap;
+uniform sampler2D uColorMap;  // Textura de cor (albedo) do material
 uniform vec3 uLightPos;       // Posição da luz em view space
 uniform vec3 uLightColor;     // Cor da luz
 uniform vec3 uAmbientColor;   // Cor ambiente
 uniform float uBumpStrength;  // Intensidade do bump (0.0 - 2.0)
 uniform float uShininess;     // Expoente especular de Phong
+uniform float uSpecStrength;  // Intensidade do especular (tijolo é fosco)
 uniform bool uUseBump;        // Toggle: normal map ativo?
 
 // Constrói a matriz TBN usando derivadas parciais da posição e UV
@@ -73,10 +75,10 @@ void main() {
 
   // Componente especular (Phong)
   float spec = pow(max(dot(R, V), 0.0), uShininess);
-  vec3 specular = uLightColor * spec * 0.5;
+  vec3 specular = uLightColor * spec * uSpecStrength;
 
-  // Cor base do material
-  vec3 baseColor = vec3(0.7, 0.55, 0.4); // tom terroso/pedra
+  // Cor base do material: amostrada da textura de cor (albedo)
+  vec3 baseColor = texture2D(uColorMap, vTexCoord).rgb;
 
   vec3 finalColor = (ambient + diffuse) * baseColor + specular;
 

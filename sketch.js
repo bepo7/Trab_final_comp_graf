@@ -24,14 +24,14 @@ function preload() {
   cena3.normalMapShader = loadShader(
     'shaders/normalmap.vert',
     'shaders/normalmap.frag',
-    function () { console.log('Normal Map shader carregado com sucesso.'); },
+    function () {},
     function (err) { console.warn('Aviso: Shader de Normal Map não carregou:', err); }
   );
 
   cena5.shader = loadShader(
     'shaders/raymarching.vert',
     'shaders/raymarching.frag',
-    function () { console.log('Ray Marching shader carregado com sucesso.'); },
+    function () {},
     function (err) { console.warn('Aviso: Shader de Ray Marching não carregou:', err); }
   );
 }
@@ -170,9 +170,18 @@ function drawHUD() {
 
   if (!hudContent || !sceneIndicator) return;
 
-  // Toggle visibilidade
+  // O painel de instruções alterna com [H]; o indicador de cena/navegação
+  // e o FPS (canto superior direito) ficam SEMPRE visíveis — senão quem
+  // esconde o HUD perde a dica de que [H] o restaura.
   hudOverlay.style.display = hudVisible ? 'block' : 'none';
-  document.getElementById('hud-meta').style.display = hudVisible ? 'block' : 'none';
+
+  // Meta info (sempre visível)
+  if (!transicao.ativa) {
+    sceneIndicator.textContent = 'Cena ' + cenaAtual + ' / 6  ·  [←/→] Navegar  ·  [H] HUD  ·  [1-6] Pular';
+    sceneIndicator.style.color = '';
+    sceneIndicator.style.fontSize = '';
+  }
+  fpsDiv.textContent = 'FPS: ' + Math.round(frameRate());
 
   if (!hudVisible) return;
 
@@ -206,14 +215,6 @@ function drawHUD() {
     }
   }
   hudContent.innerHTML = html;
-
-  // Meta info
-  if (!transicao.ativa) {
-    sceneIndicator.textContent = 'Cena ' + cenaAtual + ' / 6  ·  [←/→] Navegar  ·  [H] HUD  ·  [1-6] Pular';
-    sceneIndicator.style.color = '';
-    sceneIndicator.style.fontSize = '';
-  }
-  fpsDiv.textContent = 'FPS: ' + Math.round(frameRate());
 }
 
 function escapeHtml(str) {
@@ -296,6 +297,11 @@ function keyPressed() {
     hudVisible = !hudVisible;
   }
 
+  // Cena 4: teclas específicas (S = sombras, R = reflexo, V = overlays)
+  if (cenaAtual === 4) {
+    keyPressedCena4();
+  }
+
   // Cena 5: teclas específicas (R = reflexão, S = sombras)
   if (cenaAtual === 5) {
     keyPressedCena5();
@@ -314,7 +320,7 @@ function keyPressed() {
     return false;
   }
 
-  // Debug: pular cenas com números 1-6
+  // Atalho: pular direto para uma cena com as teclas 1-6
   if (key >= '1' && key <= '6') {
     let dest = parseInt(key);
     if (dest !== cenaAtual) {

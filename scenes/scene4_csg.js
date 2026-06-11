@@ -16,6 +16,8 @@
 //   • Interseção raio-esfera via raízes da equação quadrática
 //   • Interseção raio-caixa via Slab Method
 //   • CSG por operações em intervalos de raio
+//   • Interseção raio-plano (chão) + SOMBRAS via shadow ray
+//   • Reflexo de 1 salto no chão e céu em gradiente
 //   • Diagrama esquemático (vista de cima) do raio lançado
 // ============================================================
 
@@ -40,6 +42,12 @@ let cena4 = {
   // --- Iluminação do ray caster ---
   light: null,
 
+  // --- Chão (plano y = chao.y) e efeitos de realismo ---
+  chao: { y: -78, tam: 56, corA: [56, 60, 72], corB: [70, 75, 89] },
+  sombrasAtivas: true,    // sombras via shadow ray (tecla S)
+  reflexoAtivo: true,     // reflexo de 1 salto no chão (tecla R)
+  overlaysVisiveis: true, // diagrama/marcadores didáticos (tecla V)
+
   // --- Histórico de raios lançados pelo usuário ---
   rays: [],
   maxRays: 5,
@@ -50,8 +58,12 @@ let cena4 = {
 
   // --- Scratch reutilizável (evita alocação no caminho quente) ---
   _spanA: { valid: false }, _spanB: { valid: false },
+  // Scratch SECUNDÁRIO para raios de sombra/reflexo — nunca misturar
+  // com _spanA/_spanB, que precisam sobreviver ao raio primário.
+  _spanSA: { valid: false }, _spanSB: { valid: false },
   _hit: { t: 0, kind: 0, prim: null, ax: 0, s: 1 },
   _rgb: [0, 0, 0], _bg: [0, 0, 0], _tmp: [0, 0, 0], _scol: [0, 0, 0],
+  _rcol: [0, 0, 0],
   portalPulse: 0,
 };
 
@@ -94,11 +106,16 @@ function setupCena4() {
   c4_updateAABB(cena4.primB);
 
   // Luz: vinda de cima-esquerda-frente. L = direção PARA a luz.
-  let L = createVector(-0.4, -0.62, 0.55).normalize();
+  // (No referencial deste ray caster, +Y do mundo aparece no TOPO da
+  // tela — a geração do raio nega o ndcY — então "de cima" é Ly > 0.)
+  let L = createVector(-0.4, 0.62, 0.55).normalize();
   cena4.light = {
     Lx: L.x, Ly: L.y, Lz: L.z,
     color: [1.0, 0.97, 0.9],
-    ambient: 0.24, specPow: 42, specStrength: 0.55,
+    ambient: 0.30, specPow: 42, specStrength: 0.55,
+    // Luz de preenchimento fria (direita/cima/fundo) — só difusa, sem
+    // sombra nem especular: mantém legível o lado oposto à luz principal.
+    fill: { dirx: 0.701, diry: 0.319, dirz: -0.638, int: 0.18, color: [0.78, 0.86, 1.0] },
   };
 
   c4_layoutUI();
@@ -153,6 +170,14 @@ function c4_layoutUI() {
 
 function c4_ensureLayout() {
   if (width !== cena4._lastW || height !== cena4._lastH) c4_layoutUI();
+}
+
+// Invalida o buffer E reinicia a varredura do topo. (Sem o reset de
+// scanY, invalidar no MEIO de um sweep deixava metade do buffer com a
+// imagem antiga — e o buffer era marcado válido ao final.)
+function c4_invalidar() {
+  cena4.cacheValido = false;
+  cena4.scanY = 0;
 }
 
 // ============================================================
@@ -279,25 +304,29 @@ function c4_firstHit(A, B, mode) {
   return h;
 }
 
-// Sombreamento Blinn-Phong (Lambert + ambiente + especular + leve rim).
-// Escreve a cor [0..255] em out.
-function c4_shadeInto(Px, Py, Pz, nx, ny, nz, baseColor, dx, dy, dz, out) {
+// Sombreamento Blinn-Phong (Lambert + ambiente + especular + leve rim
+// + luz de preenchimento). shadowK atenua difusa+especular quando o
+// ponto está na sombra (a ambiente fica intacta). Escreve [0..255] em out.
+function c4_shadeInto(Px, Py, Pz, nx, ny, nz, baseColor, dx, dy, dz, shadowK, out) {
   let lt = cena4.light;
-  let diff = Math.max(nx * lt.Lx + ny * lt.Ly + nz * lt.Lz, 0);
+  let diff = Math.max(nx * lt.Lx + ny * lt.Ly + nz * lt.Lz, 0) * shadowK;
   // V = -rd ; H = normalize(L + V)
   let vx = -dx, vy = -dy, vz = -dz;
   let hx = lt.Lx + vx, hy = lt.Ly + vy, hz = lt.Lz + vz;
   let hl = Math.sqrt(hx * hx + hy * hy + hz * hz) || 1;
   hx /= hl; hy /= hl; hz /= hl;
-  let spec = Math.pow(Math.max(nx * hx + ny * hy + nz * hz, 0), lt.specPow) * lt.specStrength;
+  let spec = Math.pow(Math.max(nx * hx + ny * hy + nz * hz, 0), lt.specPow) * lt.specStrength * shadowK;
   // Rim light (Fresnel) para destacar a silhueta — "melhor de ver".
   let ndv = Math.max(nx * vx + ny * vy + nz * vz, 0);
   let rim = Math.pow(1 - ndv, 3) * 0.35;
+  // Luz de preenchimento (fria, fixa, sem sombra)
+  let fl = lt.fill;
+  let fdiff = Math.max(nx * fl.dirx + ny * fl.diry + nz * fl.dirz, 0) * fl.int;
 
   let li = lt.ambient + diff * 0.82;
-  out[0] = constrain(baseColor[0] * li * lt.color[0] + 255 * spec * lt.color[0] + 90 * rim, 0, 255);
-  out[1] = constrain(baseColor[1] * li * lt.color[1] + 255 * spec * lt.color[1] + 110 * rim, 0, 255);
-  out[2] = constrain(baseColor[2] * li * lt.color[2] + 255 * spec * lt.color[2] + 150 * rim, 0, 255);
+  out[0] = constrain(baseColor[0] * (li * lt.color[0] + fdiff * fl.color[0]) + 255 * spec * lt.color[0] + 90 * rim, 0, 255);
+  out[1] = constrain(baseColor[1] * (li * lt.color[1] + fdiff * fl.color[1]) + 255 * spec * lt.color[1] + 110 * rim, 0, 255);
+  out[2] = constrain(baseColor[2] * (li * lt.color[2] + fdiff * fl.color[2]) + 255 * spec * lt.color[2] + 150 * rim, 0, 255);
 }
 
 // Normal geométrica no ponto P, garantindo que aponte contra o raio
@@ -316,21 +345,138 @@ function c4_normalInto(hit, Px, Py, Pz, dx, dy, dz, out) {
   out[0] = nx; out[1] = ny; out[2] = nz;
 }
 
-// Cor de um único raio (modo opaco). Escreve em out [0..255].
-function c4_shadePixelInto(ox, oy, oz, dx, dy, dz, bg, out) {
+// Interseção raio-plano do chão (y = cena4.chao.y, normal +Y).
+// O chão NÃO participa do CSG: é testado à parte e o hit mais
+// próximo (sólido × chão) vence.
+function c4_floorHitT(oy, dy) {
+  if (dy >= -1e-6) return Infinity; // raio não desce
+  let t = (cena4.chao.y - oy) / dy;
+  return t > 0 ? t : Infinity;
+}
+
+// O ponto está na sombra? Traça um raio NA DIREÇÃO DA LUZ (direcional
+// → direção fixa) contra o sólido CSG, usando os scratch SECUNDÁRIOS.
+// A sombra é do RESULTADO da operação CSG de graça: c4_insideOf já
+// codifica o modo, então a "mordida" de A−B deixa a luz atravessar.
+function c4_csgOccluded(ox, oy, oz, mode) {
+  let lt = cena4.light;
+  let A = cena4._spanSA, B = cena4._spanSB;
+  c4_primSpanInto(ox, oy, oz, lt.Lx, lt.Ly, lt.Lz, cena4.primA, A);
+  c4_primSpanInto(ox, oy, oz, lt.Lx, lt.Ly, lt.Lz, cena4.primB, B);
+  return c4_firstHit(A, B, mode) !== null;
+}
+
+// Cor vista por um raio REFLETIDO no chão (1 salto): testa só o sólido
+// CSG (scratch secundários); sem novo shadow ray (peso baixo do reflexo
+// não justifica o custo). Miss → céu refletido.
+function c4_reflectColorInto(ox, oy, oz, dx, dy, dz, mode, out) {
+  let A = cena4._spanSA, B = cena4._spanSB;
+  c4_primSpanInto(ox, oy, oz, dx, dy, dz, cena4.primA, A);
+  c4_primSpanInto(ox, oy, oz, dx, dy, dz, cena4.primB, B);
+  let hit = c4_firstHit(A, B, mode);
+  if (!hit) { c4_skyInto(dy, out); return; }
+  let t = hit.t;
+  let Px = ox + dx * t, Py = oy + dy * t, Pz = oz + dz * t;
+  let n = cena4._tmp;
+  c4_normalInto(hit, Px, Py, Pz, dx, dy, dz, n);
+  c4_shadeInto(Px, Py, Pz, n[0], n[1], n[2], hit.prim.color, dx, dy, dz, 1.0, out);
+}
+
+// Sombreia um ponto do CHÃO: xadrez, difusa (N = +Y), sombra projetada,
+// reflexo de 1 salto e fog fundindo no horizonte. Escreve em out.
+function c4_shadeFloorInto(ox, oy, oz, dx, dy, dz, t, modeSec, out) {
+  let ch = cena4.chao;
+  let Px = ox + dx * t, Py = ch.y, Pz = oz + dz * t;
+
+  // Xadrez procedural no plano XZ
+  let par = ((Math.floor(Px / ch.tam) + Math.floor(Pz / ch.tam)) & 1) === 0;
+  let base = par ? ch.corA : ch.corB;
+
+  let lt = cena4.light;
+  let diff = Math.max(lt.Ly, 0); // N=(0,1,0) → N·L = Ly
+
+  // Sombra do sólido CSG projetada no chão (o chão não se auto-oclui)
+  let K = 1.0;
+  if (cena4.sombrasAtivas && c4_csgOccluded(Px, Py + 0.5, Pz, modeSec)) {
+    K = (cena4.csgMode === 0) ? 0.55 : 0.30;
+  }
+
+  // Luz de preenchimento na normal do chão: max(N·dir, 0) = diry
+  let fl = lt.fill;
+  let fdiff = Math.max(fl.diry, 0) * fl.int;
+
+  let li = lt.ambient + diff * 0.82 * K;
+  let r = base[0] * (li * lt.color[0] + fdiff * fl.color[0]);
+  let g = base[1] * (li * lt.color[1] + fdiff * fl.color[1]);
+  let b = base[2] * (li * lt.color[2] + fdiff * fl.color[2]);
+
+  // Reflexo de 1 salto (piso polido), peso Fresnel-ish: mais forte
+  // em incidência rasante (dy ~ 0) do que olhando de cima (dy ~ -1).
+  if (cena4.reflexoAtivo) {
+    let rc = cena4._rcol;
+    c4_reflectColorInto(Px, Py + 0.5, Pz, dx, -dy, dz, modeSec, rc);
+    let grz = 1 + dy;
+    let kR = Math.min(0.16 + 0.30 * grz * grz * grz, 0.5);
+    r = r * (1 - kR) + rc[0] * kR;
+    g = g * (1 - kR) + rc[1] * kR;
+    b = b * (1 - kR) + rc[2] * kR;
+  }
+
+  // Fog: contraste do xadrez some e o chão se funde na cor do horizonte
+  let f = 1 - Math.exp(-Math.max(0, t - 240) / 520);
+  r = r * (1 - f) + 64 * f;
+  g = g * (1 - f) + 74 * f;
+  b = b * (1 - f) + 98 * f;
+
+  out[0] = constrain(r, 0, 255);
+  out[1] = constrain(g, 0, 255);
+  out[2] = constrain(b, 0, 255);
+}
+
+// Cor de um único raio. Caminho completo do pixel: 1º hit do sólido
+// CSG vs chão vs céu (o mais próximo vence), sombra via shadow ray e
+// reflexo nos pixels de chão. Escreve em out [0..255].
+function c4_shadePixelInto(ox, oy, oz, dx, dy, dz, out) {
   let A = cena4._spanA, B = cena4._spanB;
   c4_primSpanInto(ox, oy, oz, dx, dy, dz, cena4.primA, A);
   c4_primSpanInto(ox, oy, oz, dx, dy, dz, cena4.primB, B);
   let mode = cena4.csgMode;
+  // No modo 0 (operandos translúcidos) sombra e reflexo usam a UNIÃO.
+  let modeSec = (mode === 0) ? 1 : mode;
 
-  if (mode === 0) { c4_composeNoneInto(ox, oy, oz, dx, dy, dz, A, B, bg, out); return; }
+  let tFloor = c4_floorHitT(oy, dy);
+  let hit = (mode !== 0) ? c4_firstHit(A, B, mode) : null;
 
-  let hit = c4_firstHit(A, B, mode);
-  if (!hit) { out[0] = bg[0]; out[1] = bg[1]; out[2] = bg[2]; return; }
-  let Px = ox + dx * hit.t, Py = oy + dy * hit.t, Pz = oz + dz * hit.t;
-  let n = cena4._tmp;
-  c4_normalInto(hit, Px, Py, Pz, dx, dy, dz, n);
-  c4_shadeInto(Px, Py, Pz, n[0], n[1], n[2], hit.prim.color, dx, dy, dz, out);
+  if (hit && hit.t < tFloor) {
+    // --- Sólido CSG ---
+    // Extrair TUDO do hit ANTES de qualquer raio secundário: _hit e os
+    // scratch secundários são compartilhados pelos traces de sombra.
+    let t = hit.t;
+    let Px = ox + dx * t, Py = oy + dy * t, Pz = oz + dz * t;
+    let n = cena4._tmp;
+    c4_normalInto(hit, Px, Py, Pz, dx, dy, dz, n);
+    let nx = n[0], ny = n[1], nz = n[2];
+    let baseColor = hit.prim.color;
+    let K = 1.0;
+    if (cena4.sombrasAtivas &&
+        c4_csgOccluded(Px + nx * 0.5, Py + ny * 0.5, Pz + nz * 0.5, modeSec)) {
+      K = 0.30;
+    }
+    c4_shadeInto(Px, Py, Pz, nx, ny, nz, baseColor, dx, dy, dz, K, out);
+    return;
+  }
+
+  if (tFloor < Infinity) {
+    c4_shadeFloorInto(ox, oy, oz, dx, dy, dz, tFloor, modeSec, out);
+  } else {
+    c4_skyInto(dy, out);
+  }
+
+  // Modo 0: compor os operandos translúcidos SOBRE a base (chão/céu).
+  // _spanA/_spanB sobreviveram: os raios secundários usam _spanSA/_spanSB.
+  if (mode === 0) {
+    c4_composeNoneInto(ox, oy, oz, dx, dy, dz, A, B, out, out);
+  }
 }
 
 // Modo "Nenhuma": A e B TRANSLÚCIDOS, compostos de trás para frente,
@@ -351,7 +497,7 @@ function c4_composeNoneInto(ox, oy, oz, dx, dy, dz, A, B, bg, out) {
     let nx = Px - prim.center.x, ny = Py - prim.center.y, nz = Pz - prim.center.z;
     let l = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1; nx /= l; ny /= l; nz /= l;
     if (nx * dx + ny * dy + nz * dz > 0) { nx = -nx; ny = -ny; nz = -nz; }
-    c4_shadeInto(Px, Py, Pz, nx, ny, nz, prim.color, dx, dy, dz, cena4._scol);
+    c4_shadeInto(Px, Py, Pz, nx, ny, nz, prim.color, dx, dy, dz, 1.0, cena4._scol);
     r = cena4._scol[0] * alpha + r * (1 - alpha);
     g = cena4._scol[1] * alpha + g * (1 - alpha);
     b = cena4._scol[2] * alpha + b * (1 - alpha);
@@ -359,12 +505,28 @@ function c4_composeNoneInto(ox, oy, oz, dx, dy, dz, A, B, bg, out) {
   out[0] = r; out[1] = g; out[2] = b;
 }
 
-// Cor de fundo (gradiente vertical) em função da linha do buffer.
+// Cor do CÉU em função da componente vertical da direção do raio
+// (dy > 0 = olhando para cima): horizonte claro → zênite escuro.
+// Direções abaixo do horizonte clampam na cor do horizonte.
+function c4_skyInto(dy, out) {
+  let u = Math.sqrt(constrain(dy / 0.6, 0, 1));
+  out[0] = 64 + (9 - 64) * u;
+  out[1] = 74 + (13 - 74) * u;
+  out[2] = 98 + (28 - 98) * u;
+}
+
+// Cor de fundo de uma LINHA do buffer (pré-preenchimento durante a
+// varredura progressiva): converte a linha em direção de raio (com
+// dcx = 0) e delega ao gradiente de céu — coerente com o render final.
 function c4_bgInto(y, out) {
-  let f = y / cena4.rcH;            // 0 topo, 1 base
-  out[0] = 14 + (1 - f) * 11;
-  out[1] = 17 + (1 - f) * 13;
-  out[2] = 30 + (1 - f) * 20;
+  let cam = cena4.cam;
+  let ndcY = -(((y + 0.5) / cena4.rcH) * 2 - 1);
+  let dcy = ndcY * cam.tan;
+  let dx = cam.ux * dcy + cam.fx;
+  let dy = cam.uy * dcy + cam.fy;
+  let dz = cam.uz * dcy + cam.fz;
+  let l = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+  c4_skyInto(dy / l, out);
 }
 
 // ============================================================
@@ -424,12 +586,15 @@ function c4_recomputeStep() {
     }
   }
 
-  let linhas = Math.max(1, Math.ceil(rcH / 14));
+  // Varredura adaptativa: com sombras/reflexo o custo por raio sobe,
+  // então processamos menos linhas por frame (frame-time estável; o
+  // sweep completo leva ~20 frames em vez de ~14).
+  let divisor = (cena4.sombrasAtivas || cena4.reflexoAtivo) ? 20 : 14;
+  let linhas = Math.max(1, Math.ceil(rcH / divisor));
   let yEnd = Math.min(cena4.scanY + linhas, rcH);
-  let px = buf.pixels, rgb = cena4._rgb, bg = cena4._bg;
+  let px = buf.pixels, rgb = cena4._rgb;
 
   for (let y = cena4.scanY; y < yEnd; y++) {
-    c4_bgInto(y, bg);
     let ndcY = -(((y + 0.5) / rcH) * 2 - 1);
     let dcy = ndcY * cam.tan;
     for (let x = 0; x < rcW; x++) {
@@ -442,7 +607,7 @@ function c4_recomputeStep() {
       let l = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
       dx /= l; dy /= l; dz /= l;
 
-      c4_shadePixelInto(cam.ox, cam.oy, cam.oz, dx, dy, dz, bg, rgb);
+      c4_shadePixelInto(cam.ox, cam.oy, cam.oz, dx, dy, dz, rgb);
       let idx = 4 * (y * rcW + x);
       px[idx] = rgb[0]; px[idx + 1] = rgb[1]; px[idx + 2] = rgb[2]; px[idx + 3] = 255;
     }
@@ -481,37 +646,17 @@ function drawCena4() {
     if (tex && tex.setInterpolation) tex.setInterpolation(LINEAR, LINEAR);
   } catch (e) { /* no-op */ }
 
-  // 2) Overlays vetoriais
-  c4_drawAABBOverlay();
-  c4_drawRayMarkers();
-  c4_drawScanlineGuide();
-  c4_drawInset();
+  // 2) Overlays vetoriais (didáticos — a tecla [V] alterna a
+  //    "visão limpa"; botões e portal são interação e ficam sempre)
+  if (cena4.overlaysVisiveis) {
+    c4_drawRayMarkers();
+    c4_drawScanlineGuide();
+    c4_drawInset();
+  }
   c4_drawUI();
 
   gl.enable(gl.DEPTH_TEST);
   pop();
-}
-
-// Bounding Volumes (AABB) como wireframe ciano translúcido.
-function c4_drawAABBOverlay() {
-  let prims = [cena4.primA, cena4.primB];
-  for (let p of prims) {
-    let mn = p.aabb.min, mx = p.aabb.max;
-    let c = [
-      c4_project(mn.x, mn.y, mn.z), c4_project(mx.x, mn.y, mn.z),
-      c4_project(mx.x, mx.y, mn.z), c4_project(mn.x, mx.y, mn.z),
-      c4_project(mn.x, mn.y, mx.z), c4_project(mx.x, mn.y, mx.z),
-      c4_project(mx.x, mx.y, mx.z), c4_project(mn.x, mx.y, mx.z),
-    ];
-    let edges = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]];
-    stroke(0, 230, 255, 70);
-    strokeWeight(1);
-    noFill();
-    for (let e of edges) {
-      let a = c[e[0]], b = c[e[1]];
-      if (a.visivel && b.visivel) line(a.x, a.y, b.x, b.y);
-    }
-  }
 }
 
 // Marcadores do último raio (na vista principal): ponto de impacto.
@@ -728,7 +873,7 @@ function clickCena4() {
   for (let btn of cena4.ui.csgBtns) {
     if (c4_pointInRect(mouseX, mouseY, btn)) {
       cena4.csgMode = btn.mode;
-      cena4.cacheValido = false; // invalida o buffer → re-varredura
+      c4_invalidar(); // re-varredura desde o topo
       return;
     }
   }
@@ -736,7 +881,7 @@ function clickCena4() {
   if (c4_pointInRect(mouseX, mouseY, cena4.ui.btnB)) {
     cena4.primB.kind = (cena4.primB.kind === 'sphere') ? 'box' : 'sphere';
     c4_updateAABB(cena4.primB);
-    cena4.cacheValido = false;
+    c4_invalidar();
     return;
   }
   // 3) Portal → Cena 5
@@ -774,6 +919,23 @@ function c4_launchRay(sx, sy) {
 }
 
 // ============================================================
+// TECLADO: [S] sombras · [R] reflexo no chão · [V] visão limpa
+// (despachado pelo keyPressed() do sketch.js quando cenaAtual === 4)
+// ============================================================
+function keyPressedCena4() {
+  if (key === 's' || key === 'S') {
+    cena4.sombrasAtivas = !cena4.sombrasAtivas;
+    c4_invalidar();
+  } else if (key === 'r' || key === 'R') {
+    cena4.reflexoAtivo = !cena4.reflexoAtivo;
+    c4_invalidar();
+  } else if (key === 'v' || key === 'V') {
+    // Só oculta overlays didáticos — não mexe no buffer
+    cena4.overlaysVisiveis = !cena4.overlaysVisiveis;
+  }
+}
+
+// ============================================================
 // HUD
 // ============================================================
 function getHUDCena4() {
@@ -786,6 +948,8 @@ function getHUDCena4() {
     ? "Esfera — raiz quadrática" : "Caixa AABB — slab method"));
   lines.push("Buffer ray-cast: " + cena4.rcW + "×" + cena4.rcH +
     (cena4.cacheValido ? "" : " (computando…)"));
+  lines.push("Sombras: " + (cena4.sombrasAtivas ? "ligadas" : "desligadas") +
+    " · Reflexo no chão: " + (cena4.reflexoAtivo ? "ligado" : "desligado"));
   lines.push("");
 
   let ray = cena4.rays.length ? cena4.rays[cena4.rays.length - 1] : null;
@@ -802,7 +966,8 @@ function getHUDCena4() {
   lines.push("▶ Clique no cenário: lançar 1 raio (veja o diagrama)");
   lines.push("▶ Barra inferior: Nenhuma · União · Interseção · Diferença");
   lines.push("▶ Botão [B]: alternar Esfera/Caixa (quadrática vs slab)");
+  lines.push("▶ Teclas: [S] sombras · [R] reflexo · [V] visão limpa");
   lines.push("▶ Seta verde (dir.) ou tecla [→]: portal → Cena 5");
-  lines.push("   Caixas ciano = Bounding Volumes (aceleradores)");
+  lines.push("   No diagrama (inset): retângulos ciano = AABBs (aceleradores)");
   return lines;
 }
