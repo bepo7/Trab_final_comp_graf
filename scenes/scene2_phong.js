@@ -7,7 +7,7 @@ let cena2 = {
   difusaAtiva: false,       // Luz direcional + reflexão difusa
   especularAtiva: false,    // Luz pontual + material especular
   shininessLevel: 0,        // Índice no array de shininess
-  shininessValues: [2, 8, 32, 128, 512, 1024, 2048, 0], // 0 = desligado
+  shininessValues: [2, 8, 32, 128, 512, 1024, 2048, 0], // 0 = especular desligado
   pontualAngulo: 0,         // Ângulo orbital da luz pontual
   boxColorBlue: false,      // Toggle cor da caixa
   portalPulse: 0,
@@ -22,32 +22,35 @@ function drawCena2() {
 
   // --- Iluminação ---
 
-  // Sempre: luz ambiente fraca
-  ambientLight(60, 60, 80);
+  // Sempre: luz ambiente fraca (baixa de propósito, para dramatizar o
+  // salto de luminância quando a difusa é ligada).
+  ambientLight(35, 35, 50);
 
   // Se difusa ativa: luz direcional
   if (cena2.difusaAtiva) {
     directionalLight(220, 210, 200, -0.5, -1, -0.8);
   }
 
-  // Se especular ativa: luz pontual orbitando
-  if (cena2.especularAtiva) {
-    let shin = cena2.shininessValues[cena2.shininessLevel];
-    if (shin > 0) { // Apenas desenha luz e orbe se não estiver "zerado"
-      cena2.pontualAngulo += 0.02;
-      let lx = cos(cena2.pontualAngulo) * 150;
-      let ly = -60;
-      let lz = sin(cena2.pontualAngulo) * 150;
-      pointLight(255, 220, 180, lx, ly, lz);
+  // Especular: valor atual de shininess. O índice 0 é o estado "desligado"
+  // (sem brilho especular e SEM o orbe da luz pontual).
+  let shin = cena2.shininessValues[cena2.shininessLevel];
+  let especularOn = cena2.especularAtiva && shin > 0;
 
-      // Pequena esfera indicando posição da luz
-      push();
-      translate(lx, ly, lz);
-      emissiveMaterial(255, 220, 150);
-      noStroke();
-      sphere(5);
-      pop();
-    }
+  // Luz pontual orbitando — só quando o especular está realmente ligado.
+  if (especularOn) {
+    cena2.pontualAngulo += 0.02;
+    let lx = cos(cena2.pontualAngulo) * 150;
+    let ly = -60;
+    let lz = sin(cena2.pontualAngulo) * 150;
+    pointLight(255, 220, 180, lx, ly, lz);
+
+    // Pequena esfera indicando posição da luz
+    push();
+    translate(lx, ly, lz);
+    emissiveMaterial(255, 220, 150);
+    noStroke();
+    sphere(5);
+    pop();
   }
 
   // =========================================
@@ -56,10 +59,10 @@ function drawCena2() {
   push();
   translate(-140, 0, 0);
   if (cena2.difusaAtiva) {
-    // Material difuso: reage à luz direcional
-    fill(100, 150, 220);
+    // Reflexão difusa (Lambert): specularMaterial define a cor e o
+    // shininess baixo deixa o brilho especular desprezível.
     specularMaterial(100, 150, 220);
-    shininess(1); // Sem brilho especular notável
+    shininess(1);
   } else {
     // Apenas ambiente: aparência "chapada"
     ambientMaterial(100, 150, 220);
@@ -76,23 +79,12 @@ function drawCena2() {
   rotateX(PI / 4);
   rotateY(frameCount * 0.005);
 
-  if (cena2.especularAtiva) {
-    let shin = cena2.shininessValues[cena2.shininessLevel];
-    if (shin > 0) {
-      specularMaterial(220, 180, 100);
-      shininess(shin);
-    } else {
-      // Quando shininess é 0, comporta-se apenas como material difuso ou ambiente
-      if (cena2.difusaAtiva) {
-        fill(220, 180, 100);
-        specularMaterial(220, 180, 100);
-        shininess(1);
-      } else {
-        ambientMaterial(220, 180, 100);
-      }
-    }
+  if (especularOn) {
+    // Especular de Phong: o expoente (shininess) controla o tamanho do brilho.
+    specularMaterial(220, 180, 100);
+    shininess(shin);
   } else if (cena2.difusaAtiva) {
-    fill(220, 180, 100);
+    // Especular desligado (shin=0) → cai para difuso, se houver luz direcional.
     specularMaterial(220, 180, 100);
     shininess(1);
   } else {
@@ -213,17 +205,14 @@ function getHUDCena2() {
   lines.push("CENA 2: Modelo de Phong");
   lines.push("");
 
+  let shin = cena2.especularAtiva ? cena2.shininessValues[cena2.shininessLevel] : -1;
   let componentes = ["Ambiente"];
   if (cena2.difusaAtiva) componentes.push("Difusa (Lambert)");
-  if (cena2.especularAtiva) {
-    let shin = cena2.shininessValues[cena2.shininessLevel];
-    if (shin === 0) {
-      componentes.push("Especular (Orbe Desligado)");
-    } else {
-      componentes.push("Especular (shininess: " + shin + ")");
-    }
-  }
+  if (cena2.especularAtiva && shin > 0) componentes.push("Especular");
   lines.push("Iluminação: " + componentes.join(" + "));
+  if (cena2.especularAtiva) {
+    lines.push("Shininess atual: " + (shin === 0 ? "0 (especular desligado)" : shin));
+  }
   lines.push("");
   lines.push("▶ Clique na esfera: luz direcional (difusa)");
   lines.push("▶ Clique no torus: luz pontual + especular");

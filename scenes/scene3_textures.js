@@ -92,22 +92,24 @@ function drawCena3() {
   translate(0, 60, -50);
   rotateX(-PI / 6);
 
-  // Aplicar filtro de textura via GL direto
-  let glCtx = drawingContext;
   let texObj = cena3.checkerTex;
 
   noStroke();
   texture(texObj);
 
-  // Configurar filtro da textura
-  // Em p5.js WebGL, a forma mais robusta é obter a textura interna e usar setInterpolation
-  let p5tex = window._renderer.getTexture(texObj);
-  if (p5tex) {
-    if (!cena3.filtroLinear) {
-      p5tex.setInterpolation(window.NEAREST, window.NEAREST);
-    } else {
-      p5tex.setInterpolation(window.LINEAR, window.LINEAR);
+  // Configurar o filtro de interpolação da textura.
+  // NOTA: p5.js não expõe API pública para trocar o filtro de uma textura
+  // já criada; usamos o renderer interno (_renderer.getTexture), que é API
+  // NÃO-oficial. O try-catch garante que, se quebrar numa versão futura, a
+  // cena continua rodando (o toggle apenas vira no-op).
+  try {
+    let p5tex = window._renderer.getTexture(texObj);
+    if (p5tex && typeof p5tex.setInterpolation === 'function') {
+      let modo = cena3.filtroLinear ? LINEAR : NEAREST;
+      p5tex.setInterpolation(modo, modo);
     }
+  } catch (e) {
+    // Silencioso: roda a cada frame, não poluir o console.
   }
 
   plane(300, 300);
@@ -122,18 +124,23 @@ function drawCena3() {
   rotateY(cena3.esferaRot);
 
   if (cena3.bumpAtivo && cena3.normalMapShader) {
-    // Usar shader customizado
+    // Shader customizado de Normal Mapping (matriz TBN via derivadas)
     shader(cena3.normalMapShader);
     cena3.normalMapShader.setUniform('uNormalMap', cena3.normalMapTex);
     cena3.normalMapShader.setUniform('uLightPos', [150.0, -100.0, 100.0]);
     cena3.normalMapShader.setUniform('uLightColor', [1.0, 0.95, 0.85]);
     cena3.normalMapShader.setUniform('uAmbientColor', [0.3, 0.3, 0.4]);
     cena3.normalMapShader.setUniform('uBumpStrength', 1.5);
+    cena3.normalMapShader.setUniform('uShininess', 32.0);
     cena3.normalMapShader.setUniform('uUseBump', true);
   } else {
-    // Sem shader: textura simples do normal map (só pra ver as cores)
+    // Bump DESLIGADO: superfície LISA, cor ~ baseColor do shader (~178,140,102).
+    // Assim, ao LIGAR o normal map, o contraste é só o RELEVO surgindo —
+    // e não uma troca de cor (antes mostrava o próprio normal map como RGB).
     noStroke();
-    texture(cena3.normalMapTex);
+    ambientMaterial(180, 140, 100);
+    specularMaterial(200, 200, 200);
+    shininess(32);
   }
 
   sphere(60, 32, 32);
@@ -247,7 +254,7 @@ function getHUDCena3() {
   lines.push("CENA 3: Texturização e Shaders");
   lines.push("");
   lines.push("Filtro de textura: " + (cena3.filtroLinear ? "LINEAR (suave)" : "NEAREST (pixelado)"));
-  lines.push("Normal Mapping: " + (cena3.bumpAtivo ? "ATIVO (shader TBN)" : "Desativado"));
+  lines.push("Normal Mapping: " + (cena3.bumpAtivo ? "ATIVO (shader TBN)" : "Desativado (superfície lisa)"));
   lines.push("");
   lines.push("▶ Clique no plano: alternar filtro LINEAR/NEAREST");
   lines.push("▶ Clique na esfera: ativar/desativar Normal Map");

@@ -112,6 +112,10 @@ function drawCena1() {
     );
   }
 
+  // Gizmo de eixos XYZ — referencial da cena. Desenhado após a matriz
+  // do Arcball, então gira junto com a cena (ajuda a entender a rotação).
+  drawAxisGizmo(70);
+
   // =========================================
   // OBJETO 1: CUBO (Transformações Afins)
   // =========================================
@@ -129,7 +133,10 @@ function drawCena1() {
       Math.sin(cena1.cuboTranslacao) * orbitRadius
     );
 
-    // Rotação em torno de eixo arbitrário (composta)
+    // Composição de rotações de Euler. Em p5 (WebGL) cada rotateX/Z/Y
+    // PÓS-multiplica a matriz de modelview corrente, logo a matriz final
+    // é M = Rx · Rz · Ry e o cubo é transformado por M·v. A ORDEM importa
+    // (rotações não comutam): trocar a ordem muda o resultado visual.
     rotateX(cena1.cuboAngulo * 0.7);
     rotateZ(cena1.cuboAngulo * 1.3);
     rotateY(cena1.cuboAngulo);
@@ -314,7 +321,8 @@ function mouseDraggedCena1() {
   if (cena1.arcLastVec) {
     // Calcular eixo e ângulo de rotação
     let axis = p5.Vector.cross(cena1.arcLastVec, curVec);
-    if (axis.mag() > 0.0001) {
+    // Limiar para descartar micro-movimentos (evita jitter numérico).
+    if (axis.mag() > 0.001) {
       axis.normalize();
       let angle = p5.Vector.angleBetween(cena1.arcLastVec, curVec) * 2;
 
@@ -354,5 +362,22 @@ function getHUDCena1() {
   lines.push("▶ Clique no cone: perspectiva + arcball");
   lines.push("▶ Clique na esfera roxa: wireframe");
   lines.push("▶ Clique na seta verde (dir.): portal →");
+  lines.push("   Eixos: X=vermelho · Y=verde · Z=azul");
   return lines;
+}
+
+/**
+ * Desenha um gizmo de eixos a partir da origem (X=vermelho, Y=verde,
+ * Z=azul). Nota: em p5 (WebGL) o eixo +Y aponta para BAIXO na tela.
+ * Não entra no buffer de picking (puramente visual/didático).
+ */
+function drawAxisGizmo(len) {
+  push();
+  strokeWeight(3);
+  stroke(255, 70, 70); line(0, 0, 0, len, 0, 0); // X
+  stroke(70, 230, 90); line(0, 0, 0, 0, len, 0); // Y (+Y é para baixo)
+  stroke(90, 140, 255); line(0, 0, 0, 0, 0, len); // Z
+  strokeWeight(1);
+  noStroke();
+  pop();
 }

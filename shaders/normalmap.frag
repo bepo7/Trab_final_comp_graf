@@ -14,6 +14,7 @@ uniform vec3 uLightPos;       // Posição da luz em view space
 uniform vec3 uLightColor;     // Cor da luz
 uniform vec3 uAmbientColor;   // Cor ambiente
 uniform float uBumpStrength;  // Intensidade do bump (0.0 - 2.0)
+uniform float uShininess;     // Expoente especular de Phong
 uniform bool uUseBump;        // Toggle: normal map ativo?
 
 // Constrói a matriz TBN usando derivadas parciais da posição e UV
@@ -71,7 +72,7 @@ void main() {
   vec3 diffuse = uLightColor * diff * 0.7;
 
   // Componente especular (Phong)
-  float spec = pow(max(dot(R, V), 0.0), 32.0);
+  float spec = pow(max(dot(R, V), 0.0), uShininess);
   vec3 specular = uLightColor * spec * 0.5;
 
   // Cor base do material

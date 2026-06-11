@@ -209,7 +209,7 @@ function drawHUD() {
 
   // Meta info
   if (!transicao.ativa) {
-    sceneIndicator.textContent = 'Cena ' + cenaAtual + ' / 6  ·  [H] HUD  ·  [1-6] Pular cena';
+    sceneIndicator.textContent = 'Cena ' + cenaAtual + ' / 6  ·  [←/→] Navegar  ·  [H] HUD  ·  [1-6] Pular';
     sceneIndicator.style.color = '';
     sceneIndicator.style.fontSize = '';
   }
@@ -246,21 +246,23 @@ function renderPickBuffer() {
 function mousePressed() {
   if (transicao.ativa) return;
 
-  // A cena 5 agora usa getPickedID para o portal Seta (ID 10)
-  // Então não podemos pular o picking!
+  // Cena 4: ray caster próprio com hit-test 2D (não usa o pickBuffer).
+  if (cenaAtual === 4) { clickCena4(); return; }
 
+  // Cena 6: editor de Bézier com hit-test 2D próprio (seleção de ponto).
+  if (cenaAtual === 6) { mousePressedCena6(); return; }
+
+  // A cena 5 usa getPickedID para o portal Seta (ID 10) → não pular o picking.
   let pickedID = getPickedID(mouseX, mouseY);
-
-  // Cena 4 tem lógica especial: clique no vazio também lança raio
-  if (cenaAtual === 4 && pickedID === 0) {
-    clickCena4Void();
-    return;
-  }
 
   // Eventos de mouse que devem rodar independente de ter clicado em objeto
   if (cenaAtual === 1) {
     mousePressedCena1();
   }
+
+  // Cena 5: o portal usa picking (ID 10), mas clicar em QUALQUER outro ponto
+  // do cenário cicla o smooth-min — então não podemos abortar em pickedID 0.
+  if (cenaAtual === 5) { clickCena5(pickedID); return; }
 
   // Interromper se não clicou em nenhum objeto interagível
   if (pickedID === 0) return;
@@ -269,21 +271,22 @@ function mousePressed() {
     case 1: clickCena1(pickedID); break;
     case 2: clickCena2(pickedID); break;
     case 3: clickCena3(pickedID); break;
-    case 4: clickCena4(pickedID); break;
-    case 5: clickCena5(pickedID); break;
-    case 6: clickCena6(pickedID); break;
   }
 }
 
 function mouseDragged() {
   if (cenaAtual === 1) {
     mouseDraggedCena1();
+  } else if (cenaAtual === 6) {
+    mouseDraggedCena6();
   }
 }
 
 function mouseReleased() {
   if (cenaAtual === 1) {
     mouseReleasedCena1();
+  } else if (cenaAtual === 6) {
+    mouseReleasedCena6();
   }
 }
 
@@ -293,9 +296,22 @@ function keyPressed() {
     hudVisible = !hudVisible;
   }
 
-  // Cena 5: tecla R para reflexão
+  // Cena 5: teclas específicas (R = reflexão, S = sombras)
   if (cenaAtual === 5) {
     keyPressedCena5();
+  }
+
+  // Navegação sequencial por setas (← anterior, → próxima), com clamp [1,6].
+  // iniciarTransicao já ignora chamadas durante uma transição em andamento.
+  if (keyCode === RIGHT_ARROW) {
+    let dest = Math.min(cenaAtual + 1, 6);
+    if (dest !== cenaAtual) iniciarTransicao(dest);
+    return false; // evita o scroll/comportamento default do navegador
+  }
+  if (keyCode === LEFT_ARROW) {
+    let dest = Math.max(cenaAtual - 1, 1);
+    if (dest !== cenaAtual) iniciarTransicao(dest);
+    return false;
   }
 
   // Debug: pular cenas com números 1-6

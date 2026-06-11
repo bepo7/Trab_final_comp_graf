@@ -6,9 +6,9 @@ A aplicação é dividida em "cenas", cada uma focada em um tópico específico 
 1. **Transformações e Arcball:** Rotação, translação e visualização em malha (wireframe).
 2. **Modelo de Iluminação de Phong:** Interações com luz ambiente, difusa (Lambert), especular (brilho) e materiais emissivos.
 3. **Texturas e Normal Mapping:** Aplicação de texturas procedurais (Checkerboard) e simulação de relevo usando Normal Maps sobre superfícies com iluminação de Blinn-Phong.
-4. **Ray Casting e CSG (Geometria Sólida Construtiva):** Demonstração visual de bounding boxes, lançamento de raios (interseção raio-esfera) e operações booleanas (União, Interseção e Diferença) usando recortes na GPU.
-5. **Ray Marching e SDFs:** Renderização via Shaders customizados (GLSL) demonstrando fusão suave (Smooth Min) de funções de distância e reflexões complexas.
-6. **Curvas Paramétricas (Bézier):** Traçado e movimentação temporal utilizando pontos de controle interativos de curvas de Bézier.
+4. **Ray Casting e CSG (Geometria Sólida Construtiva):** Ray caster implementado na CPU (sem usar o pipeline de triângulos): cada pixel lança um raio, testado primeiro contra os Bounding Volumes (AABB) e depois contra as primitivas implícitas (raízes da equação quadrática para esferas, *slab method* para caixas). As operações booleanas (União, Interseção, Diferença) são CSG de verdade, calculadas por interseção dos intervalos de raio. Inclui um diagrama esquemático (vista de cima) do raio lançado.
+5. **Ray Marching e SDFs:** Renderização via Shaders customizados (GLSL) demonstrando fusão suave (Smooth Min) de funções de distância, sombras suaves e reflexões complexas.
+6. **Curvas Paramétricas (Bézier):** Editor interativo de curva de Bézier cúbica com 4 pontos de controle arrastáveis, avaliada pela base de Bernstein e pelo algoritmo de De Casteljau (construção animada).
 
 ## Como rodar o projeto localmente
 
@@ -27,4 +27,6 @@ Siga os passos abaixo no seu terminal (dentro da pasta do projeto):
    Abra o seu navegador de preferência e acesse:
    [http://localhost:3000](http://localhost:3000)
 
-**Dica:** Sempre que o servidor subir, clique nos portais de transição (Setas Verdes no canto direito) para navegar pelas cenas. Caso tenha feito atualizações de código, lembre-se de usar `Cmd + Shift + R` (Mac) ou `Ctrl + Shift + R` (Windows) para limpar o cache da página.
+**Navegação:** clique nos portais de transição (Setas Verdes no canto direito) **ou** use as teclas **← / →** para avançar/voltar entre as cenas. As teclas **1–6** pulam direto para uma cena e **H** alterna o HUD.
+
+**Dica:** Caso tenha feito atualizações de código, lembre-se de usar `Cmd + Shift + R` (Mac) ou `Ctrl + Shift + R` (Windows) para limpar o cache da página.

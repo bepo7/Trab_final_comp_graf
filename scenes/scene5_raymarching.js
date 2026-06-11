@@ -10,6 +10,7 @@ let cena5 = {
   smoothKValues: [0.0, 0.3, 0.8, 1.5],
   smoothKIndex: 0,
   reflectAtivo: false,       // Reflexão ativa
+  shadowsAtivo: true,        // Sombras suaves ativas
   portalPulse: 0,
 };
 
@@ -28,6 +29,7 @@ function drawCena5() {
     cena5.shader.setUniform('uTime', millis() / 1000.0);
     cena5.shader.setUniform('uSmoothK', cena5.smoothK);
     cena5.shader.setUniform('uReflect', cena5.reflectAtivo ? 1 : 0);
+    cena5.shader.setUniform('uShadows', cena5.shadowsAtivo ? 1 : 0);
     cena5.shader.setUniform('uMouse', [mouseX / width, 1.0 - mouseY / height]);
 
     // Fullscreen quad
@@ -110,6 +112,10 @@ function keyPressedCena5() {
   if (key === 'r' || key === 'R') {
     cena5.reflectAtivo = !cena5.reflectAtivo;
   }
+  // Tecla S: toggle sombras suaves
+  if (key === 's' || key === 'S') {
+    cena5.shadowsAtivo = !cena5.shadowsAtivo;
+  }
 }
 
 function getHUDCena5() {
@@ -117,11 +123,13 @@ function getHUDCena5() {
   lines.push("CENA 5: Ray Marching & SDFs");
   lines.push("");
   lines.push("Smooth Min K: " + cena5.smoothK.toFixed(1) +
-    (cena5.smoothK === 0 ? " (sharp)" : cena5.smoothK > 1.0 ? " (mercúrio)" : " (suave)"));
+    (cena5.smoothK === 0 ? " (sharp / união booleana)" : cena5.smoothK > 1.0 ? " (mercúrio)" : " (suave)"));
   lines.push("Reflexão: " + (cena5.reflectAtivo ? "ATIVA (2 bounces)" : "Desativada"));
+  lines.push("Sombras: " + (cena5.shadowsAtivo ? "ATIVAS (soft)" : "Desativadas"));
+  lines.push("Ambiente: procedural (céu + sol)");
   lines.push("");
   lines.push("▶ Clique no cenário: ciclar suavização (smin)");
-  lines.push("▶ Tecla R: ativar/desativar reflexão");
-  lines.push("▶ Clique na seta verde (dir.): portal →");
+  lines.push("▶ Tecla R: reflexão  ·  Tecla S: sombras");
+  lines.push("▶ Clique na seta verde (dir.) ou [→]: portal →");
   return lines;
 }

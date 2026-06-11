@@ -11,6 +11,7 @@ uniform vec2 uResolution;
 uniform float uTime;
 uniform float uSmoothK;   // Constante para smooth minimum (0.0 = sharp)
 uniform int uReflect;      // 0 = sem reflexão, 1 = com reflexão
+uniform int uShadows;      // 0 = sem sombras, 1 = sombras suaves
 uniform vec2 uMouse;       // Posição normalizada do mouse
 
 // ============================================================
@@ -264,8 +265,8 @@ vec3 shade(vec3 ro, vec3 rd) {
   // Diffuse (Lambert)
   float diff = max(dot(N, lightDir), 0.0);
 
-  // Shadow
-  float shadow = softShadow(p + N * 0.01, lightDir, 0.02, 10.0, 16.0);
+  // Shadow (suave) — pode ser desligada com a tecla S
+  float shadow = (uShadows == 1) ? softShadow(p + N * 0.01, lightDir, 0.02, 10.0, 16.0) : 1.0;
   diff *= shadow;
 
   vec3 diffuse = lightColor * diff;
