@@ -5,11 +5,13 @@
 
 // Estado da Cena 1
 let cena1 = {
-  cuboAnimando: false,       // Cubo em animação de transformações
+  // O cubo demonstra transformações afins num CICLO: cada clique avança
+  // um modo — um conceito por vez, e o último compõe os três.
+  cuboModo: 0,               // 0=Estático · 1=T · 2=R · 3=S · 4=TRS
+  cuboFase: 0,               // tempo acumulado das animações do cubo
+  cuboModos: ['Estático', 'Translação T', 'Rotação Rx·Rz·Ry', 'Escala S', 'Composição T·R·S'],
   perspectiva: false,        // Projeção: false=ortho, true=perspective
   arcballAtivo: false,       // Rotação por Arcball ativa
-  cuboAngulo: 0,             // Ângulo de rotação do cubo
-  cuboTranslacao: 0,         // Fase da translação orbital
 
   // Arcball state
   arcRotMatrix: null,        // Matriz de rotação acumulada
@@ -88,6 +90,25 @@ function mat4FromAxisAngle(axis, angle) {
   ];
 }
 
+/**
+ * Transformações do modo atual do cubo, como DADOS (posição, ângulos de
+ * Euler e escala). Draw e picking aplicam os mesmos valores — assim o
+ * hit-test fica sempre alinhado ao desenho, em qualquer modo.
+ * Base do cubo: (-120, 0, 0); a órbita da Translação gira ao redor dela.
+ */
+function c1_transformCubo() {
+  let m = cena1.cuboModo, f = cena1.cuboFase;
+  let t = { x: -120, y: 0, z: 0, rx: 0, ry: 0, rz: 0, s: 1 };
+  if (m === 1 || m === 4) {
+    t.x = -120 + Math.cos(f) * 60;
+    t.y = Math.sin(f * 2) * 18;
+    t.z = Math.sin(f) * 60;
+  }
+  if (m === 2 || m === 4) { t.rx = f * 0.7; t.rz = f * 1.3; t.ry = f; }
+  if (m === 3 || m === 4) t.s = 1 + 0.45 * Math.sin(f * 2);
+  return t;
+}
+
 function drawCena1() {
   // --- Projeção ---
   if (cena1.perspectiva) {
@@ -113,35 +134,62 @@ function drawCena1() {
   }
 
   // =========================================
-  // OBJETO 1: CUBO (Transformações Afins)
+  // OBJETO 1: CUBO (Transformações Afins — ciclo T → R → S → TRS)
+  // Cada clique avança um modo; o material é SEMPRE o mesmo azul — o
+  // que muda é só a transformação, e os guias visuais explicam qual.
   // =========================================
-  push();
-  if (cena1.cuboAnimando) {
-    cena1.cuboAngulo += 0.02;
-    cena1.cuboTranslacao += 0.015;
+  if (cena1.cuboModo !== 0) cena1.cuboFase += 0.02;
+  let tc = c1_transformCubo();
 
-    // Composição de transformações: TRS (Translate, Rotate, Scale)
-    // A ordem importa! Primeiro translate (orbital), depois rotação local.
-    let orbitRadius = 80;
-    translate(
-      Math.cos(cena1.cuboTranslacao) * orbitRadius,
-      Math.sin(cena1.cuboTranslacao * 0.7) * 30,
-      Math.sin(cena1.cuboTranslacao) * orbitRadius
-    );
-
-    // Composição de rotações de Euler. Em p5 (WebGL) cada rotateX/Z/Y
-    // PÓS-multiplica a matriz de modelview corrente, logo a matriz final
-    // é M = Rx · Rz · Ry e o cubo é transformado por M·v. A ORDEM importa
-    // (rotações não comutam): trocar a ordem muda o resultado visual.
-    rotateX(cena1.cuboAngulo * 0.7);
-    rotateZ(cena1.cuboAngulo * 1.3);
-    rotateY(cena1.cuboAngulo);
-
-    normalMaterial();
-  } else {
-    translate(-120, 0, 0);
-    ambientMaterial(80, 160, 255);
+  // Trilha da órbita (modos com Translação): a curva paramétrica
+  // COMPLETA do translate, desenhada fraca — o caminho a percorrer.
+  if (cena1.cuboModo === 1 || cena1.cuboModo === 4) {
+    push();
+    noFill();
+    stroke(255, 220, 70, 80);
+    strokeWeight(1.5);
+    beginShape();
+    for (let i = 0; i <= 64; i++) {
+      let a = (i / 64) * TWO_PI;
+      vertex(-120 + Math.cos(a) * 60, Math.sin(a * 2) * 18, Math.sin(a) * 60);
+    }
+    endShape(CLOSE);
+    pop();
   }
+
+  // Fantasma do tamanho original (modo Escala): referência fixa que o
+  // cubo pulsante atravessa — escala É em relação a algo.
+  if (cena1.cuboModo === 3) {
+    push();
+    translate(-120, 0, 0);
+    stroke(255, 255, 255, 90);
+    noFill();
+    box(60);
+    pop();
+  }
+
+  // Eixos do MUNDO em cinza no centro do cubo (modos com Rotação):
+  // ficam fixos enquanto os eixos locais coloridos giram — o contraste
+  // mostra que rotacionar é girar o referencial LOCAL do objeto.
+  if (cena1.cuboModo === 2 || cena1.cuboModo === 4) {
+    push();
+    translate(tc.x, tc.y, tc.z);
+    stroke(140, 140, 150, 110);
+    strokeWeight(1.2);
+    line(0, 0, 0, 70, 0, 0);
+    line(0, 0, 0, 0, 70, 0);
+    line(0, 0, 0, 0, 0, 70);
+    pop();
+  }
+
+  // O cubo em si, com as transformações do modo atual (T depois R depois S)
+  push();
+  translate(tc.x, tc.y, tc.z);
+  rotateX(tc.rx);
+  rotateZ(tc.rz);
+  rotateY(tc.ry);
+  scale(tc.s);
+  ambientMaterial(80, 160, 255);
   if (cena1.wireframeAtivo) {
     stroke(255);
     noFill();
@@ -149,6 +197,19 @@ function drawCena1() {
     noStroke();
   }
   box(60);
+  // Eixos LOCAIS RGB: desenhados DEPOIS das rotações, giram junto com o
+  // cubo (+Y do p5 aponta para baixo na tela).
+  if (cena1.cuboModo === 2 || cena1.cuboModo === 4) {
+    strokeWeight(2.5);
+    stroke(255, 80, 80); line(0, 0, 0, 70, 0, 0);   // +X local
+    stroke(80, 255, 120); line(0, 0, 0, 0, 70, 0);  // +Y local
+    stroke(90, 160, 255); line(0, 0, 0, 0, 0, 70);  // +Z local
+    strokeWeight(1);
+    noStroke();
+    fill(255, 80, 80); push(); translate(70, 0, 0); sphere(4); pop();
+    fill(80, 255, 120); push(); translate(0, 70, 0); sphere(4); pop();
+    fill(90, 160, 255); push(); translate(0, 0, 70); sphere(4); pop();
+  }
   pop();
 
   // =========================================
@@ -247,21 +308,14 @@ function drawCena1Pick() {
     );
   }
 
-  // Cubo (ID 1)
+  // Cubo (ID 1) — espelha as transforms do modo atual via c1_transformCubo
   pickBuffer.push();
-  if (cena1.cuboAnimando) {
-    let orbitRadius = 80;
-    pickBuffer.translate(
-      Math.cos(cena1.cuboTranslacao) * orbitRadius,
-      Math.sin(cena1.cuboTranslacao * 0.7) * 30,
-      Math.sin(cena1.cuboTranslacao) * orbitRadius
-    );
-    pickBuffer.rotateX(cena1.cuboAngulo * 0.7);
-    pickBuffer.rotateZ(cena1.cuboAngulo * 1.3);
-    pickBuffer.rotateY(cena1.cuboAngulo);
-  } else {
-    pickBuffer.translate(-120, 0, 0);
-  }
+  let tc = c1_transformCubo();
+  pickBuffer.translate(tc.x, tc.y, tc.z);
+  pickBuffer.rotateX(tc.rx);
+  pickBuffer.rotateZ(tc.rz);
+  pickBuffer.rotateY(tc.ry);
+  pickBuffer.scale(tc.s);
   setPickID(1);
   pickBuffer.box(60);
   pickBuffer.pop();
@@ -294,8 +348,8 @@ function drawCena1Pick() {
 
 function clickCena1(pickedID) {
   if (pickedID === 1) {
-    // Toggle animação do cubo
-    cena1.cuboAnimando = !cena1.cuboAnimando;
+    // Avança o ciclo de transformações do cubo: T → R → S → TRS
+    cena1.cuboModo = (cena1.cuboModo + 1) % 5;
   } else if (pickedID === 2) {
     // Toggle perspectiva + ativar Arcball
     cena1.perspectiva = !cena1.perspectiva;
@@ -350,11 +404,15 @@ function getHUDCena1() {
   lines.push("CENA 1: Geometria e Câmera");
   lines.push("");
   lines.push("Projeção: " + (cena1.perspectiva ? "Perspectiva" : "Ortográfica"));
-  lines.push("Cubo: " + (cena1.cuboAnimando ? "Animando (TRS)" : "Estático — clique!"));
+  lines.push("Cubo: " + cena1.cuboModos[cena1.cuboModo] +
+    (cena1.cuboModo === 0 ? " — clique!" : ""));
+  if (cena1.cuboModo === 4) {
+    lines.push("   M = T(órbita) · Rx·Rz·Ry · S(pulso) — a ordem importa");
+  }
   lines.push("Arcball: " + (cena1.arcballAtivo ? "Ativo (arraste o mouse)" : "Inativo"));
   lines.push("Aparência: " + (cena1.wireframeAtivo ? "Wireframe" : "Sólido"));
   lines.push("");
-  lines.push("▶ Clique no cubo: transformações afins");
+  lines.push("▶ Clique no cubo: próxima transformação (T → R → S → TRS)");
   lines.push("▶ Clique no cone: perspectiva + arcball");
   lines.push("▶ Clique na esfera roxa: wireframe");
   lines.push("▶ Clique na seta verde (dir.): portal →");

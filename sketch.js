@@ -1,6 +1,6 @@
 // ============================================================
 // sketch.js — Controlador Principal (Máquina de Estados)
-// Gerencia as 6 cenas, transições, HUD e Color Picking
+// Gerencia as 7 cenas, transições, HUD e Color Picking
 // ============================================================
 
 let cenaAtual = 1;
@@ -50,6 +50,7 @@ function setup() {
   setupCena4();
   setupCena5();
   setupCena6();
+  setupCena7();
 
   // Prevenir menu de contexto no clique direito
   document.oncontextmenu = function () { return false; };
@@ -75,6 +76,7 @@ function draw() {
     case 4: drawCena4(); break;
     case 5: drawCena5(); break;
     case 6: drawCena6(); break;
+    case 7: drawCena7(); break;
   }
   pop();
 
@@ -153,7 +155,8 @@ function getNomeCena(num) {
     case 3: return "Texturização e Shaders";
     case 4: return "CSG e Ray Casting";
     case 5: return "Ray Marching & SDFs";
-    case 6: return "Curvas e Superfícies";
+    case 6: return "Ray Marching 2D (passo a passo)";
+    case 7: return "Curvas e Superfícies";
     default: return "???";
   }
 }
@@ -177,7 +180,7 @@ function drawHUD() {
 
   // Meta info (sempre visível)
   if (!transicao.ativa) {
-    sceneIndicator.textContent = 'Cena ' + cenaAtual + ' / 6  ·  [←/→] Navegar  ·  [H] HUD  ·  [1-6] Pular';
+    sceneIndicator.textContent = 'Cena ' + cenaAtual + ' / 7  ·  [←/→] Navegar  ·  [H] HUD  ·  [1-7] Pular';
     sceneIndicator.style.color = '';
     sceneIndicator.style.fontSize = '';
   }
@@ -193,6 +196,7 @@ function drawHUD() {
     case 4: hudLines = getHUDCena4(); break;
     case 5: hudLines = getHUDCena5(); break;
     case 6: hudLines = getHUDCena6(); break;
+    case 7: hudLines = getHUDCena7(); break;
   }
 
   // Construir HTML do HUD
@@ -235,6 +239,7 @@ function renderPickBuffer() {
     case 4: drawCena4Pick(); break;
     case 5: drawCena5Pick(); break;
     case 6: drawCena6Pick(); break;
+    case 7: drawCena7Pick(); break;
   }
 
   endPick();
@@ -250,8 +255,12 @@ function mousePressed() {
   // Cena 4: ray caster próprio com hit-test 2D (não usa o pickBuffer).
   if (cenaAtual === 4) { clickCena4(); return; }
 
-  // Cena 6: editor de Bézier com hit-test 2D próprio (seleção de ponto).
+  // Cena 6: visualização de ray marching com hit-test 2D próprio
+  // (arrasto de obstáculos + portal).
   if (cenaAtual === 6) { mousePressedCena6(); return; }
+
+  // Cena 7: editor de Bézier com hit-test 2D próprio (seleção de ponto).
+  if (cenaAtual === 7) { mousePressedCena7(); return; }
 
   // A cena 5 usa getPickedID para o portal Seta (ID 10) → não pular o picking.
   let pickedID = getPickedID(mouseX, mouseY);
@@ -278,16 +287,34 @@ function mousePressed() {
 function mouseDragged() {
   if (cenaAtual === 1) {
     mouseDraggedCena1();
+  } else if (cenaAtual === 4) {
+    mouseDraggedCena4();
   } else if (cenaAtual === 6) {
     mouseDraggedCena6();
+  } else if (cenaAtual === 7) {
+    mouseDraggedCena7();
   }
 }
 
 function mouseReleased() {
   if (cenaAtual === 1) {
     mouseReleasedCena1();
+  } else if (cenaAtual === 4) {
+    mouseReleasedCena4();
   } else if (cenaAtual === 6) {
     mouseReleasedCena6();
+  } else if (cenaAtual === 7) {
+    mouseReleasedCena7();
+  }
+}
+
+function mouseWheel(event) {
+  if (transicao.ativa) return;
+  // Cena 4: roda do mouse = zoom da câmera orbital. return false impede
+  // o scroll da página (só aqui; nas demais cenas o default fica intacto).
+  if (cenaAtual === 4) {
+    mouseWheelCena4(event);
+    return false;
   }
 }
 
@@ -297,7 +324,8 @@ function keyPressed() {
     hudVisible = !hudVisible;
   }
 
-  // Cena 4: teclas específicas (S = sombras, R = reflexo, V = overlays)
+  // Cena 4: teclas específicas (S = sombras, R = reflexo, V = overlays,
+  // C = reset da câmera)
   if (cenaAtual === 4) {
     keyPressedCena4();
   }
@@ -307,10 +335,16 @@ function keyPressed() {
     keyPressedCena5();
   }
 
-  // Navegação sequencial por setas (← anterior, → próxima), com clamp [1,6].
+  // Cena 6: espaço = pausa, N = passo a passo, F = comparação passo fixo
+  if (cenaAtual === 6) {
+    keyPressedCena6();
+    if (key === ' ') return false; // espaço não deve scrollar a página
+  }
+
+  // Navegação sequencial por setas (← anterior, → próxima), com clamp [1,7].
   // iniciarTransicao já ignora chamadas durante uma transição em andamento.
   if (keyCode === RIGHT_ARROW) {
-    let dest = Math.min(cenaAtual + 1, 6);
+    let dest = Math.min(cenaAtual + 1, 7);
     if (dest !== cenaAtual) iniciarTransicao(dest);
     return false; // evita o scroll/comportamento default do navegador
   }
@@ -320,8 +354,8 @@ function keyPressed() {
     return false;
   }
 
-  // Atalho: pular direto para uma cena com as teclas 1-6
-  if (key >= '1' && key <= '6') {
+  // Atalho: pular direto para uma cena com as teclas 1-7
+  if (key >= '1' && key <= '7') {
     let dest = parseInt(key);
     if (dest !== cenaAtual) {
       iniciarTransicao(dest);

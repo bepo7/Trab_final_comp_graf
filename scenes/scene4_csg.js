@@ -19,11 +19,30 @@
 //   • Interseção raio-plano (chão) + SOMBRAS via shadow ray
 //   • Reflexo de 1 salto no chão e céu em gradiente
 //   • Diagrama esquemático (vista de cima) do raio lançado
+//   • Câmera ORBITAL interativa (arrastar = yaw/pitch, roda = zoom)
+//     com dois níveis de resolução: preview ao vivo durante a
+//     interação e refino progressivo em alta resolução ao parar
 // ============================================================
 
+// --- Constantes da câmera orbital e dos níveis de resolução ---
+const C4_DIST_MIN = 160;    // olho sempre FORA dos sólidos (canto da caixa ≈ 141)
+const C4_DIST_MAX = 700;
+const C4_PITCH_MAX = 1.45;  // rad (~83°): cos(pitch) ≥ 0.12 — sem gimbal lock
+const C4_DRAG_PX = 4;       // limiar clique-vs-arrasto (px)
+const C4_SENS = 0.005;      // rad por pixel de arrasto
+const C4_ZOOM_K = 1.0015;   // fator de zoom por unidade de event.delta
+const C4_BUDGET_MS = 7;     // timebox da varredura por frame (ms)
+const C4_FULL_CAP = 1280;   // teto de largura do buffer FULL (px)
+const C4_RES_IDLE_MS = 280; // câmera parada esse tempo → refina em FULL
+
 let cena4 = {
-  // --- Câmera matemática FIXA (a câmera não se move, por design) ---
+  // --- Câmera matemática ORBITAL ao redor da origem ---
+  // cam é reconstruída por c4_updateCam() a partir de orbit; os overlays
+  // (c4_project/c4_screenRay/inset) leem cena4.cam vivo e acompanham.
   cam: null,        // { ox,oy,oz (olho), fx..,rx..,ux.. (base), tan }
+  orbit: { yaw: 0, pitch: 0, dist: 0 },   // pose atual
+  orbit0: { yaw: 0, pitch: 0, dist: 0 },  // pose inicial (tecla [C])
+  drag: { armado: false, orbitando: false, x0: 0, y0: 0 },
 
   // --- Primitivas (operandos do CSG) ---
   primA: null,      // esfera A
@@ -33,9 +52,18 @@ let cena4 = {
   csgMode: 1,       // 0=Nenhuma, 1=União, 2=Interseção, 3=Diferença
   csgModes: ['Nenhuma (operandos)', 'União (A ∪ B)', 'Interseção (A ∩ B)', 'Diferença (A − B)'],
 
-  // --- Buffer do ray caster (baixa resolução, esticado para a tela) ---
+  // --- Buffers do ray caster em DOIS níveis de resolução ---
+  // rcBuffer/rcW/rcH apontam para o nível ATIVO (todo o caminho quente
+  // lê só estes três). FULL = nítido, refinado progressivamente com a
+  // câmera parada; PREVIEW = barato, varrido ao vivo durante a órbita.
   rcBuffer: null,
   rcW: 0, rcH: 0,
+  resMode: 'full',  // 'full' | 'preview'
+  bufFull: null, wFull: 0, hFull: 0,
+  bufPrev: null, wPrev: 0, hPrev: 0,
+  _fullTemImg: false, // o buffer full já tem uma imagem completa
+  _prevTemImg: false, // o preview já tem uma imagem completa (p/ seed)
+  lastCamMs: 0,       // millis() da última interação de câmera
   cacheValido: false,
   scanY: 0,         // linha atual da varredura progressiva
 
@@ -71,22 +99,22 @@ let cena4 = {
 // SETUP
 // ============================================================
 function setupCena4() {
-  // Câmera fixa olhando para a origem, ligeiramente de cima.
-  let eye = createVector(0, -45, 330);
-  let target = createVector(0, 0, 0);
-  let worldUp = createVector(0, 1, 0);
-
-  let forward = p5.Vector.sub(target, eye).normalize();
-  let right = p5.Vector.cross(forward, worldUp).normalize();
-  let up = p5.Vector.cross(right, forward); // base ortonormal
+  // Câmera ORBITAL olhando para a origem. A pose inicial é a antiga
+  // câmera fixa eye=(0,-45,330) expressa em yaw/pitch/dist — derivada
+  // em runtime para reproduzir EXATAMENTE a mesma base ortonormal.
+  let eyeY = -45, eyeZ = 330;
+  let dist0 = Math.hypot(eyeY, eyeZ);
+  cena4.orbit0 = { yaw: 0, pitch: Math.asin(eyeY / dist0), dist: dist0 };
+  cena4.orbit = { yaw: cena4.orbit0.yaw, pitch: cena4.orbit0.pitch, dist: cena4.orbit0.dist };
 
   cena4.cam = {
-    ox: eye.x, oy: eye.y, oz: eye.z,
-    fx: forward.x, fy: forward.y, fz: forward.z,
-    rx: right.x, ry: right.y, rz: right.z,
-    ux: up.x, uy: up.y, uz: up.z,
+    ox: 0, oy: 0, oz: 0,
+    fx: 0, fy: 0, fz: 0,
+    rx: 0, ry: 0, rz: 0,
+    ux: 0, uy: 0, uz: 0,
     tan: Math.tan((PI / 3) / 2), // FOV vertical de 60°
   };
+  c4_updateCam();
 
   // Operandos: duas esferas sobrepostas (A azul, B laranja).
   // B guarda também 'half' para quando virar caixa (slab method).
@@ -135,14 +163,28 @@ function c4_updateAABB(prim) {
   }
 }
 
-// Cria o buffer de ray casting e posiciona a UI (em coords de tela).
+// Cria os buffers de ray casting e posiciona a UI (em coords de tela).
 function c4_layoutUI() {
-  // Buffer limitado a ~700px de largura → performance estável em qualquer tela.
-  cena4.rcW = Math.round(constrain(Math.floor(width / 2), 200, 700));
-  cena4.rcH = Math.max(2, Math.round(cena4.rcW * height / width));
-  if (cena4.rcBuffer) cena4.rcBuffer.remove();
-  cena4.rcBuffer = createGraphics(cena4.rcW, cena4.rcH);
-  cena4.rcBuffer.pixelDensity(1);
+  // DOIS buffers com a MESMA razão de aspecto do canvas: FULL chega à
+  // resolução nativa (até C4_FULL_CAP) — esticado ≤1.5× some o pixelado;
+  // PREVIEW (~192px) custa o mesmo que um passo do sweep antigo, então
+  // varre praticamente a tela inteira a cada frame durante a órbita.
+  cena4.wFull = Math.round(constrain(Math.min(width, C4_FULL_CAP), 200, C4_FULL_CAP));
+  cena4.hFull = Math.max(2, Math.round(cena4.wFull * height / width));
+  cena4.wPrev = Math.round(constrain(Math.floor(width / 10), 128, 192));
+  cena4.hPrev = Math.max(2, Math.round(cena4.wPrev * height / width));
+  if (cena4.bufFull) cena4.bufFull.remove();
+  if (cena4.bufPrev) cena4.bufPrev.remove();
+  cena4.bufFull = createGraphics(cena4.wFull, cena4.hFull);
+  cena4.bufFull.pixelDensity(1);
+  cena4.bufPrev = createGraphics(cena4.wPrev, cena4.hPrev);
+  cena4.bufPrev.pixelDensity(1);
+  cena4._fullTemImg = false;
+  cena4._prevTemImg = false;
+  cena4.resMode = 'full';
+  cena4.rcBuffer = cena4.bufFull;
+  cena4.rcW = cena4.wFull;
+  cena4.rcH = cena4.hFull;
   cena4.cacheValido = false;
   cena4.scanY = 0;
 
@@ -178,6 +220,77 @@ function c4_ensureLayout() {
 function c4_invalidar() {
   cena4.cacheValido = false;
   cena4.scanY = 0;
+}
+
+// ============================================================
+// CÂMERA ORBITAL (yaw/pitch/dist ao redor da origem)
+// ============================================================
+
+// Reconstrói cena4.cam a partir da pose orbital — ÚNICA autoridade
+// sobre os clamps. Escreve IN PLACE no mesmo objeto: c4_project,
+// c4_screenRay, c4_bgInto e o inset leem cena4.cam vivo e acompanham.
+function c4_updateCam() {
+  let o = cena4.orbit;
+  o.dist = constrain(o.dist, C4_DIST_MIN, C4_DIST_MAX);
+  o.pitch = constrain(o.pitch, -C4_PITCH_MAX, C4_PITCH_MAX);
+  // O olho nunca afunda abaixo do chão (y = chao.y; +Y do mundo aparece
+  // para CIMA na tela). Como depende de dist, o zoom pode re-clampar o
+  // pitch levemente — comportamento esperado.
+  let minPitch = Math.asin(Math.max(-1, (cena4.chao.y + 6) / o.dist));
+  if (o.pitch < minPitch) o.pitch = minPitch;
+
+  let cp = Math.cos(o.pitch), sp = Math.sin(o.pitch);
+  let sy = Math.sin(o.yaw), cy = Math.cos(o.yaw);
+  // olho na esfera de raio dist; forward aponta para o target (origem)
+  let ex = o.dist * cp * sy, ey = o.dist * sp, ez = o.dist * cp * cy;
+  let fx = -ex / o.dist, fy = -ey / o.dist, fz = -ez / o.dist;
+  // right = normalize(forward × worldUp), worldUp = (0,1,0) → (-fz, 0, fx)
+  let rl = Math.hypot(fz, fx) || 1;
+  let rx = -fz / rl, rz = fx / rl;
+  // up = right × forward (base ortonormal; ry = 0)
+  let ux = -rz * fy;
+  let uy = rz * fx - rx * fz;
+  let uz = rx * fy;
+
+  let cam = cena4.cam;
+  cam.ox = ex; cam.oy = ey; cam.oz = ez;
+  cam.fx = fx; cam.fy = fy; cam.fz = fz;
+  cam.rx = rx; cam.ry = 0; cam.rz = rz;
+  cam.ux = ux; cam.uy = uy; cam.uz = uz;
+  c4_invalidar();
+}
+
+// Tecla [C]: volta à pose inicial exata.
+function c4_resetCam() {
+  cena4.orbit = {
+    yaw: cena4.orbit0.yaw,
+    pitch: cena4.orbit0.pitch,
+    dist: cena4.orbit0.dist,
+  };
+  c4_setRes('full');
+  c4_updateCam();
+}
+
+// Alterna o buffer ATIVO entre full e preview. Ao entrar em preview,
+// semeia-o com a última imagem full reduzida (sem flash de céu); a
+// volta para full é semeada dentro de c4_recomputeStep (upscale).
+function c4_setRes(mode) {
+  if (cena4.resMode === mode) return;
+  cena4.resMode = mode;
+  if (mode === 'preview') {
+    cena4.rcBuffer = cena4.bufPrev;
+    cena4.rcW = cena4.wPrev;
+    cena4.rcH = cena4.hPrev;
+    if (cena4._fullTemImg) {
+      cena4.bufPrev.image(cena4.bufFull, 0, 0, cena4.wPrev, cena4.hPrev);
+      cena4._prevTemImg = true;
+    }
+  } else {
+    cena4.rcBuffer = cena4.bufFull;
+    cena4.rcW = cena4.wFull;
+    cena4.rcH = cena4.hFull;
+  }
+  c4_invalidar();
 }
 
 // ============================================================
@@ -412,7 +525,9 @@ function c4_shadeFloorInto(ox, oy, oz, dx, dy, dz, t, modeSec, out) {
 
   // Reflexo de 1 salto (piso polido), peso Fresnel-ish: mais forte
   // em incidência rasante (dy ~ 0) do que olhando de cima (dy ~ -1).
-  if (cena4.reflexoAtivo) {
+  // No PREVIEW (câmera em movimento) o reflexo sai — é o efeito mais
+  // caro e o menos perceptível em movimento; as sombras ficam.
+  if (cena4.reflexoAtivo && cena4.resMode === 'full') {
     let rc = cena4._rcol;
     c4_reflectColorInto(Px, Py + 0.5, Pz, dx, -dy, dz, modeSec, rc);
     let grz = 1 + dy;
@@ -572,29 +687,34 @@ function c4_recomputeStep() {
   let rcW = cena4.rcW, rcH = cena4.rcH;
 
   if (cena4.scanY === 0) {
+    // Início de um sweep: semear o buffer com a melhor imagem disponível
+    // — o refino "afia" a foto em vez de piscar céu. Sem seed (primeira
+    // visita), pré-preenche com o gradiente de fundo.
+    let seedFull = (cena4.resMode === 'full' && cena4._prevTemImg);
+    if (seedFull) buf.image(cena4.bufPrev, 0, 0, rcW, rcH);
     buf.loadPixels();
-    // pré-preenche TODO o buffer com o gradiente de fundo (linhas ainda
-    // não computadas aparecem como fundo durante a varredura).
-    let bgc = cena4._bg, px0 = buf.pixels;
-    for (let y = 0; y < rcH; y++) {
-      c4_bgInto(y, bgc);
-      let r = bgc[0] | 0, g = bgc[1] | 0, b = bgc[2] | 0;
-      for (let x = 0; x < rcW; x++) {
-        let idx = 4 * (y * rcW + x);
-        px0[idx] = r; px0[idx + 1] = g; px0[idx + 2] = b; px0[idx + 3] = 255;
+    let manterVelho = seedFull || (cena4.resMode === 'preview' && cena4._prevTemImg);
+    if (!manterVelho) {
+      let bgc = cena4._bg, px0 = buf.pixels;
+      for (let y = 0; y < rcH; y++) {
+        c4_bgInto(y, bgc);
+        let r = bgc[0] | 0, g = bgc[1] | 0, b = bgc[2] | 0;
+        for (let x = 0; x < rcW; x++) {
+          let idx = 4 * (y * rcW + x);
+          px0[idx] = r; px0[idx + 1] = g; px0[idx + 2] = b; px0[idx + 3] = 255;
+        }
       }
     }
   }
 
-  // Varredura adaptativa: com sombras/reflexo o custo por raio sobe,
-  // então processamos menos linhas por frame (frame-time estável; o
-  // sweep completo leva ~20 frames em vez de ~14).
-  let divisor = (cena4.sombrasAtivas || cena4.reflexoAtivo) ? 20 : 14;
-  let linhas = Math.max(1, Math.ceil(rcH / divisor));
-  let yEnd = Math.min(cena4.scanY + linhas, rcH);
+  // Varredura com TIMEBOX: processa linhas até estourar o orçamento de
+  // ms do frame. Robusto para qualquer largura de buffer (192 ou 1280)
+  // e para o custo variável por linha (céu barato, sólido+sombra caro);
+  // garante ≥1 linha/frame por construção.
+  let t0 = performance.now();
   let px = buf.pixels, rgb = cena4._rgb;
-
-  for (let y = cena4.scanY; y < yEnd; y++) {
+  let y = cena4.scanY;
+  while (y < rcH) {
     let ndcY = -(((y + 0.5) / rcH) * 2 - 1);
     let dcy = ndcY * cam.tan;
     for (let x = 0; x < rcW; x++) {
@@ -611,10 +731,17 @@ function c4_recomputeStep() {
       let idx = 4 * (y * rcW + x);
       px[idx] = rgb[0]; px[idx + 1] = rgb[1]; px[idx + 2] = rgb[2]; px[idx + 3] = 255;
     }
+    y++;
+    if (performance.now() - t0 > C4_BUDGET_MS) break;
   }
   buf.updatePixels();
-  cena4.scanY = yEnd;
-  if (cena4.scanY >= rcH) { cena4.cacheValido = true; cena4.scanY = 0; }
+  cena4.scanY = y;
+  if (y >= rcH) {
+    cena4.cacheValido = true;
+    cena4.scanY = 0;
+    if (cena4.resMode === 'preview') cena4._prevTemImg = true;
+    else cena4._fullTemImg = true;
+  }
 }
 
 // ============================================================
@@ -623,7 +750,14 @@ function c4_recomputeStep() {
 function drawCena4() {
   c4_ensureLayout();
 
-  // Recalcula o buffer apenas quando algo muda (câmera é fixa).
+  // Promoção automática preview→full quando a câmera ficou parada
+  // (cobre o zoom por roda, que não tem evento de "soltar").
+  if (cena4.resMode === 'preview' && !cena4.drag.orbitando &&
+      millis() - cena4.lastCamMs > C4_RES_IDLE_MS) {
+    c4_setRes('full');
+  }
+
+  // Recalcula o buffer apenas quando algo muda (câmera/CSG/efeitos).
   if (!cena4.cacheValido) c4_recomputeStep();
 
   // Tudo é 2D (overlay + buffer). Desabilita o teste de profundidade
@@ -691,14 +825,19 @@ function c4_drawScanlineGuide() {
 // ============================================================
 function c4_insetScaleAndMap() {
   let ins = cena4.ui.inset;
-  let xmin = -150, xmax = 150, zmin = -150, zmax = 360;
+  // A janela do mundo cresce conforme preciso para SEMPRE conter a
+  // câmera orbital (senão o ponto amarelo vazaria o painel ao orbitar).
+  let cam = cena4.cam;
+  let xmin = Math.min(-150, cam.ox - 24), xmax = Math.max(150, cam.ox + 24);
+  let zmin = Math.min(-150, cam.oz - 24), zmax = Math.max(360, cam.oz + 24);
   let sc = Math.min(ins.w / (xmax - xmin), ins.h / (zmax - zmin));
   let cx = ins.x + ins.w / 2;
+  let xc = (xmin + xmax) / 2;
   let zc = (zmin + zmax) / 2;
   let cyMid = ins.y + ins.h / 2;
   return {
     sc,
-    map: (wx, wz) => ({ x: cx + wx * sc, y: cyMid + (wz - zc) * sc }),
+    map: (wx, wz) => ({ x: cx + (wx - xc) * sc, y: cyMid + (wz - zc) * sc }),
   };
 }
 
@@ -889,8 +1028,51 @@ function clickCena4() {
     iniciarTransicao(5);
     return;
   }
-  // 4) Qualquer outro ponto: LANÇA UM RAIO (ray casting interativo)
-  c4_launchRay(mouseX, mouseY);
+  // 4) Qualquer outro ponto: ARMA o gesto. Se o mouse não se mover além
+  //    do limiar, o release lança o raio didático (clique); se mover,
+  //    vira órbita de câmera (mouseDraggedCena4).
+  cena4.drag.armado = true;
+  cena4.drag.orbitando = false;
+  cena4.drag.x0 = mouseX;
+  cena4.drag.y0 = mouseY;
+}
+
+// Arrasto = ÓRBITA da câmera (yaw/pitch) ao redor da origem, em preview.
+// Sensação "agarrar o mundo": arrastar para a direita gira a cena junto;
+// arrastar para baixo tomba o topo da cena na direção do observador.
+function mouseDraggedCena4() {
+  let d = cena4.drag;
+  if (!d.armado) return;
+  if (!d.orbitando) {
+    if (Math.hypot(mouseX - d.x0, mouseY - d.y0) <= C4_DRAG_PX) return;
+    d.orbitando = true;
+    c4_setRes('preview');
+  }
+  cena4.orbit.yaw -= movedX * C4_SENS;
+  cena4.orbit.pitch += movedY * C4_SENS;
+  cena4.lastCamMs = millis();
+  c4_updateCam();
+}
+
+function mouseReleasedCena4() {
+  let d = cena4.drag;
+  if (!d.armado) return;
+  if (!d.orbitando) {
+    c4_launchRay(d.x0, d.y0); // foi um CLIQUE parado: raio didático
+  } else {
+    c4_setRes('full');        // fim da órbita: refinar imediatamente
+  }
+  d.armado = false;
+  d.orbitando = false;
+}
+
+// Roda do mouse = zoom (dist), com refino automático ao parar
+// (promoção preview→full por tempo ocioso, no drawCena4).
+function mouseWheelCena4(event) {
+  cena4.orbit.dist *= Math.pow(C4_ZOOM_K, event.delta);
+  c4_setRes('preview');
+  cena4.lastCamMs = millis();
+  c4_updateCam();
 }
 
 function c4_launchRay(sx, sy) {
@@ -919,7 +1101,8 @@ function c4_launchRay(sx, sy) {
 }
 
 // ============================================================
-// TECLADO: [S] sombras · [R] reflexo no chão · [V] visão limpa
+// TECLADO: [S] sombras · [R] reflexo no chão · [V] visão limpa ·
+// [C] reset da câmera
 // (despachado pelo keyPressed() do sketch.js quando cenaAtual === 4)
 // ============================================================
 function keyPressedCena4() {
@@ -932,6 +1115,8 @@ function keyPressedCena4() {
   } else if (key === 'v' || key === 'V') {
     // Só oculta overlays didáticos — não mexe no buffer
     cena4.overlaysVisiveis = !cena4.overlaysVisiveis;
+  } else if (key === 'c' || key === 'C') {
+    c4_resetCam();
   }
 }
 
@@ -947,7 +1132,10 @@ function getHUDCena4() {
   lines.push("Operando B: " + (cena4.primB.kind === 'sphere'
     ? "Esfera — raiz quadrática" : "Caixa AABB — slab method"));
   lines.push("Buffer ray-cast: " + cena4.rcW + "×" + cena4.rcH +
-    (cena4.cacheValido ? "" : " (computando…)"));
+    (cena4.resMode === 'preview' ? " (preview)"
+      : (cena4.cacheValido ? "" : " (refinando " + Math.round(100 * cena4.scanY / cena4.rcH) + "%)")));
+  lines.push("Câmera: yaw " + degrees(cena4.orbit.yaw).toFixed(0) + "° · pitch " +
+    degrees(cena4.orbit.pitch).toFixed(0) + "° · dist " + cena4.orbit.dist.toFixed(0));
   lines.push("Sombras: " + (cena4.sombrasAtivas ? "ligadas" : "desligadas") +
     " · Reflexo no chão: " + (cena4.reflexoAtivo ? "ligado" : "desligado"));
   lines.push("");
@@ -963,7 +1151,8 @@ function getHUDCena4() {
     lines.push("");
   }
 
-  lines.push("▶ Clique no cenário: lançar 1 raio (veja o diagrama)");
+  lines.push("▶ Clique (sem arrastar): lançar 1 raio (veja o diagrama)");
+  lines.push("▶ Arrastar: orbitar a câmera · Roda: zoom · [C] pose inicial");
   lines.push("▶ Barra inferior: Nenhuma · União · Interseção · Diferença");
   lines.push("▶ Botão [B]: alternar Esfera/Caixa (quadrática vs slab)");
   lines.push("▶ Teclas: [S] sombras · [R] reflexo · [V] visão limpa");

@@ -11,7 +11,9 @@
 //   • Piso de madeira procedural (tábuas com veio via noise).
 //   • QUADRO pixel-art 16×16 emoldurado: a magnificação extrema
 //     evidencia a diferença LINEAR × NEAREST (clicável).
-//   • GLOBO procedural girando sobre um pedestal (clicável).
+//   • GLOBO TERRA procedural girando sobre um pedestal (clicável):
+//     continentes de uma máscara equiretangular embutida + biomas
+//     por latitude (sem nenhum asset de imagem externo).
 //   • Luz pontual ORBITANDO: a incidência rasante↔frontal faz o
 //     relevo do normal map "respirar" (com esfera-marcador).
 // ============================================================
@@ -26,7 +28,7 @@ let cena3 = {
   texParedeNormal: null,      // Normal map dos tijolos (1024×512)
   texPiso: null,              // Textura de madeira (512×256)
   texQuadro: null,            // Pixel-art 16×16
-  texGlobo: null,             // Textura do globo (256×256)
+  texGlobo: null,             // Textura do globo Terra (512×256)
   normalMapShader: null,      // Preenchido pelo preload() do sketch.js
 };
 
@@ -236,35 +238,142 @@ function gerarTexturaQuadro() {
 }
 
 /**
- * Globo: noise 3D amostrado sobre um círculo no plano (nx, ny) para a
- * longitude FECHAR em u=0/u=1 (sem costura na esfera). Continentes,
- * litoral, oceano e calotas polares.
+ * Máscara equiretangular 96×48 dos CONTINENTES DA TERRA ('#' = terra,
+ * '.' = água), desenhada à mão — mesma técnica do pixel-art do quadro.
+ * col 0 = lon −180°, col 95 = lon +180°; linha 0 = lat +90°, linha 47 = −90°.
+ * A textura final NÃO mostra estes blocos: a máscara é amostrada com
+ * interpolação bilinear + domain warp de noise (costas irregulares).
+ */
+const C3_TERRA = [
+  '................................................................................................',
+  '..........................#####..########.......................................................',
+  '..................###..###.####.###########.........###.........................................',
+  '.................###..###.####.############.........##..................###.....................',
+  '................####.########...##########..............................#######......##.........',
+  '#...#######.##################...########............#######....################################',
+  '##.########.###########..######..########.###......########.####################################',
+  '....###################.....####...##............####.##########################################',
+  '....###################.....######............##.####..###############################....##....',
+  '..............#########....#######...........###.######################################..##.....',
+  '..............#################..##...........##########################################........',
+  '..............##########...####..#.............#############..#######################.#.........',
+  '..............################...............###########...#..######################..#.........',
+  '...............##############................###...####.#####.#####################.##..........',
+  '...............#############.................#######....###########################.##..........',
+  '................###########..................######################################.............',
+  '................######....##................#############.####.###################..............',
+  '................#######...#................##############.####.#..################..............',
+  '...................######.####.............###############.#####...#####.#####..#...............',
+  '......................####................################..##.....####..####...##..............',
+  '.......................###...###..........####################.....###...####...##..............',
+  '.........................##########.......####################.......#....###...##..............',
+  '...........................########........##################........#...####.##.#..............',
+  '..........................##########..............###########.............##.###.#..............',
+  '..........................###########..............########...............#####..#.######.......',
+  '...........................############............########.................###.....######......',
+  '...........................############............########....................###...####.......',
+  '...........................###########.............########.##....................#####.........',
+  '............................##########.............#######..##..................#####.#.........',
+  '.............................########..............#######..#.................##########........',
+  '..............................######................#####...#.................###########.......',
+  '..............................######................#####.....................###########.......',
+  '.............................#####..................####......................###########.......',
+  '.............................####...................###........................#.....####.....#.',
+  '.............................###......................................................#......##.',
+  '............................###.......................................................##....##..',
+  '............................###.............................................................#...',
+  '............................##..................................................................',
+  '............................###.................................................................',
+  '................................................................................................',
+  '................................................................................................',
+  '...............................###..........................###############################.....',
+  '..............................#####.............################################################',
+  '......##########################.........##################################################.....',
+  '........#######################..........#################################################......',
+  '################################################################################################',
+  '################################################################################################',
+  '################################################################################################',
+];
+
+/**
+ * GLOBO TERRA: em vez de noise puro (que dava um "planeta genérico"),
+ * os continentes vêm da máscara C3_TERRA, amostrada com interpolação
+ * BILINEAR + DOMAIN WARP por noise — as costas ficam irregulares e os
+ * blocos da máscara somem. Biomas por latitude (tropical, deserto,
+ * temperado, tundra, neve), oceano com profundidade perto da costa e
+ * banquisa polar com borda ruidosa. As entradas de noise são amostradas
+ * num círculo (cos/sin da longitude) para a textura FECHAR em u=0/u=1.
  */
 function gerarTexturaGlobo() {
-  const W = 256, H = 256;
+  const W = 512, H = 256; // equiretangular 2:1
+  const MW = 96, MH = 48; // dimensões da máscara
+
+  // terra=1/água=0, com wrap na longitude e clamp na latitude
+  const land = (ix, iy) => {
+    if (iy < 0) iy = 0; else if (iy > MH - 1) iy = MH - 1;
+    ix = ((ix % MW) + MW) % MW;
+    return C3_TERRA[iy].charCodeAt(ix) === 35 ? 1 : 0; // 35 = '#'
+  };
+  // fração de terra num ponto contínuo da máscara (bilinear)
+  const landBi = (mx, my) => {
+    let x0 = Math.floor(mx), y0 = Math.floor(my);
+    let fx = mx - x0, fy = my - y0;
+    let a = land(x0, y0) * (1 - fx) + land(x0 + 1, y0) * fx;
+    let b = land(x0, y0 + 1) * (1 - fx) + land(x0 + 1, y0 + 1) * fx;
+    return a * (1 - fy) + b * fy;
+  };
+
   let img = createImage(W, H);
   img.loadPixels();
   for (let y = 0; y < H; y++) {
-    let v = y / H;
+    let v = y / H;            // 0 = polo norte, 1 = polo sul
+    let lat = 90 - v * 180;
+    let absLat = Math.abs(lat);
     for (let x = 0; x < W; x++) {
       let th = (x / W) * TWO_PI;
-      let nx = 1.5 + 1.5 * Math.cos(th);
-      let ny = 1.5 + 1.5 * Math.sin(th);
-      let nz = v * 2.5;
-      let cnt = noise(nx, ny, nz);
+      let nx = 2 + 2 * Math.cos(th); // círculo: noise periódico em x
+      let ny = 2 + 2 * Math.sin(th);
+
+      // costas irregulares: perturbar ONDE a máscara é lida (±1.2 célula)
+      let wx = (noise(nx * 2.3, ny * 2.3, v * 5.0) - 0.5) * 2.4;
+      let wy = (noise(nx * 2.3 + 9.7, ny * 2.3 + 3.1, v * 5.0) - 0.5) * 2.4;
+      let cont = landBi((x / W) * MW - 0.5 + wx, v * MH - 0.5 + wy);
+
+      let n1 = noise(nx * 3.0, ny * 3.0, v * 7.0);   // macro: deserto×floresta
+      let n2 = noise(nx * 7.0, ny * 7.0, v * 16.0);  // grão fino: relevo
+
       let r, g, b;
-      if (v < 0.07 || v > 0.93) {
-        r = 235; g = 240; b = 245;                  // calotas polares
-      } else if (Math.abs(cnt - 0.53) < 0.015) {
-        r = 185; g = 190; b = 150;                  // litoral (areia)
-      } else if (cnt > 0.53) {
-        let t2 = noise(nx * 2, ny * 2, nz * 2);     // continente
-        r = 70 + (110 - 70) * t2;
-        g = 120 + (150 - 120) * t2;
-        b = 60 + (80 - 60) * t2;
+      if (cont > 0.5) {
+        // ---------- TERRA: bioma por latitude ----------
+        if (absLat < 18) {           // tropical (Amazônia, Congo)
+          r = 34 + 36 * n1; g = 92 + 36 * n2; b = 38 + 18 * n1;
+        } else if (absLat < 38) {    // faixa subtropical: deserto × savana
+          let faixa = 1 - constrain(Math.abs(absLat - 24) / 14, 0, 1);
+          let d = constrain(faixa * 1.4 + (n1 - 0.5) * 1.6 - 0.25, 0, 1);
+          r = 92 + (176 - 92) * d + 18 * n2;
+          g = 116 + (150 - 116) * d + 14 * n2;
+          b = 52 + (96 - 52) * d;
+        } else if (absLat < 56) {    // temperado
+          r = 64 + 38 * n2; g = 96 + 30 * n1; b = 46 + 18 * n2;
+        } else {                     // boreal/tundra
+          r = 96 + 40 * n2; g = 104 + 32 * n2; b = 88 + 26 * n1;
+        }
+        // neve progressiva em latitudes altas (Groenlândia, Antártida)
+        let s = constrain((absLat - (60 + (n1 - 0.5) * 12)) / 9, 0, 1);
+        r += (236 - r) * s; g += (240 - g) * s; b += (246 - b) * s;
+      } else if (cont > 0.42) {
+        // ---------- LITORAL: faixa estreita de areia ----------
+        r = 176 + 18 * n2; g = 168 + 14 * n2; b = 128 + 12 * n2;
       } else {
-        let o = (noise(nx * 3 + 5, ny * 3, nz * 3) - 0.5) * 20;
-        r = 38 + o; g = 84 + o; b = 148 + o;        // oceano
+        // ---------- OCEANO: raso perto da costa → profundo ----------
+        let prof = constrain((0.42 - cont) / 0.42, 0, 1);
+        let o = (n2 - 0.5) * 14;
+        r = 40 + (12 - 40) * prof + o * 0.4;
+        g = 106 + (44 - 106) * prof + o * 0.6;
+        b = 150 + (98 - 150) * prof + o;
+        // banquisa (gelo marinho) acima de ~72° com borda ruidosa
+        let s = constrain((absLat - (72 + (n1 - 0.5) * 10)) / 5, 0, 1);
+        r += (228 - r) * s; g += (236 - g) * s; b += (244 - b) * s;
       }
       let i = 4 * (y * W + x);
       img.pixels[i] = constrain(Math.round(r), 0, 255);
@@ -392,10 +501,11 @@ function drawCena3() {
   push();
   translate(C3.globoX, C3.globoY, C3.globoZ);
   if (cena3.globoGira) cena3.globoRot += 0.008;
-  rotateY(cena3.globoRot);
+  rotateZ(0.41);           // inclinação do eixo da Terra (~23.5°)
+  rotateY(cena3.globoRot); // rotação "diária" em torno do eixo inclinado
   noStroke();
   texture(cena3.texGlobo);
-  sphere(C3.globoRaio, 32, 24);
+  sphere(C3.globoRaio, 48, 32);
   pop();
 
   // Esfera-marcador da luz orbital (emissiva, como na cena 2)
@@ -498,7 +608,7 @@ function getHUDCena3() {
   lines.push("");
   lines.push("Normal Map (parede): " + (cena3.bumpAtivo ? "ATIVO — relevo via TBN" : "desligado (parede lisa)"));
   lines.push("Filtro do quadro: " + (cena3.filtroLinear ? "LINEAR (borrado)" : "NEAREST (pixel nítido)"));
-  lines.push("Globo: " + (cena3.globoGira ? "girando" : "parado"));
+  lines.push("Globo: Terra procedural — " + (cena3.globoGira ? "girando" : "parado"));
   lines.push("");
   lines.push("▶ Clique na parede de tijolos: liga/desliga o relevo");
   lines.push("▶ Clique no quadro pixel-art: filtro LINEAR ↔ NEAREST");

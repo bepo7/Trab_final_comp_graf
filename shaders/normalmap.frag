@@ -20,7 +20,13 @@ uniform float uSpecStrength;  // Intensidade do especular (tijolo é fosco)
 uniform bool uUseBump;        // Toggle: normal map ativo?
 
 // Constrói a matriz TBN usando derivadas parciais da posição e UV
-// Técnica que não requer atributos de tangente pré-calculados
+// ("cotangent frame" de Schüler — Normal Mapping Without Precomputed
+// Tangents). Não requer atributos de tangente pré-calculados e dispensa
+// dividir pelo determinante das derivadas de UV: por pixel esse det é
+// minúsculo (~1e-6, UV 0..1 esticado sobre centenas de pixels), então
+// qualquer guard "det > eps" zera tudo e mata o relevo. Aqui o sistema
+// linear é resolvido com produtos vetoriais e só a ESCALA comum de T/B
+// é normalizada no final — a direção (e a quiralidade) fica correta.
 mat3 computeTBN() {
   vec3 dp1 = dFdx(vPosition);
   vec3 dp2 = dFdy(vPosition);
@@ -29,19 +35,17 @@ mat3 computeTBN() {
 
   vec3 N = normalize(vNormal);
 
-  // Resolver o sistema linear para T e B
-  float det = duv1.x * duv2.y - duv1.y * duv2.x;
-  // Evitar divisão por zero
-  float invDet = abs(det) > 0.0001 ? 1.0 / det : 0.0;
+  // Covetores perpendiculares: dp2perp ⟂ {dp2, N}, dp1perp ⟂ {N, dp1}
+  vec3 dp2perp = cross(dp2, N);
+  vec3 dp1perp = cross(N, dp1);
 
-  vec3 T = normalize((dp1 * duv2.y - dp2 * duv1.y) * invDet);
-  vec3 B = normalize((dp2 * duv1.x - dp1 * duv2.x) * invDet);
+  // T acompanha o gradiente de u, B o gradiente de v (em view space)
+  vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+  vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
 
-  // Re-ortogonalizar com Gram-Schmidt
-  T = normalize(T - dot(T, N) * N);
-  B = cross(N, T);
-
-  return mat3(T, B, N);
+  // Normalização invariante: preserva a razão T/B (anisotropia do UV)
+  float invmax = inversesqrt(max(dot(T, T), max(dot(B, B), 1e-12)));
+  return mat3(T * invmax, B * invmax, N);
 }
 
 void main() {

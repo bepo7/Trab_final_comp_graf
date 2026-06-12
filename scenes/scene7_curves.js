@@ -1,5 +1,5 @@
 // ============================================================
-// CENA 6: Curvas Paramétricas (Bézier)
+// CENA 7: Curvas Paramétricas (Bézier)
 // ------------------------------------------------------------
 // Editor interativo de uma curva de Bézier CÚBICA (4 pontos de
 // controle arrastáveis). A curva é avaliada de duas formas, à mão
@@ -12,7 +12,7 @@
 // diretamente para o mundo: (mouseX-width/2, mouseY-height/2).
 // ============================================================
 
-let cena6 = {
+let cena7 = {
   pontos: [],          // [{x,y}] em coords de mundo (origem no centro)
   arrastando: -1,      // índice do ponto sendo arrastado (-1 = nenhum)
   raioPonto: 12,       // raio dos handles (desenho e hit-test)
@@ -20,14 +20,14 @@ let cena6 = {
   tAtual: 0,           // t corrente da animação de De Casteljau
 };
 
-function setupCena6() {
-  cena6.pontos = [
+function setupCena7() {
+  cena7.pontos = [
     { x: -260, y: 120 },
     { x: -90, y: -150 },
     { x: 110, y: 150 },
     { x: 280, y: -110 },
   ];
-  cena6.arrastando = -1;
+  cena7.arrastando = -1;
 }
 
 // ============================================================
@@ -69,7 +69,7 @@ function deCasteljauLevels(pts, t) {
 // ============================================================
 // DRAW
 // ============================================================
-function drawCena6() {
+function drawCena7() {
   ortho();
   noLights();
 
@@ -86,7 +86,7 @@ function drawCena6() {
   }
   pop();
 
-  let P = cena6.pontos;
+  let P = cena7.pontos;
 
   // --- Polígono de controle ---
   push();
@@ -113,9 +113,9 @@ function drawCena6() {
   pop();
 
   // --- Construção de De Casteljau (animada) ---
-  if (cena6.mostrarCasteljau) {
+  if (cena7.mostrarCasteljau) {
     let t = 0.5 + 0.5 * Math.sin(millis() * 0.00055);
-    cena6.tAtual = t;
+    cena7.tAtual = t;
     let levels = deCasteljauLevels(P, t);
     let cores = [null, [120, 230, 160], [255, 200, 90]]; // níveis 1 e 2
 
@@ -147,57 +147,57 @@ function drawCena6() {
   // --- Handles (pontos de controle) ---
   for (let i = 0; i < P.length; i++) {
     let p = P[i];
-    let arrast = (i === cena6.arrastando);
+    let arrast = (i === cena7.arrastando);
     noStroke();
     fill(arrast ? color(255, 220, 80) : color(255, 110, 110));
-    circle(p.x, p.y, cena6.raioPonto * 2);
+    circle(p.x, p.y, cena7.raioPonto * 2);
     noFill();
     stroke(255, 255, 255, 150);
     strokeWeight(1.5);
-    circle(p.x, p.y, cena6.raioPonto * 2 + 7);
+    circle(p.x, p.y, cena7.raioPonto * 2 + 7);
   }
 }
 
-function drawCena6Pick() {
-  // Sem picking: a seleção de pontos usa hit-test 2D em mousePressedCena6.
+function drawCena7Pick() {
+  // Sem picking: a seleção de pontos usa hit-test 2D em mousePressedCena7.
 }
 
 // ============================================================
 // INTERAÇÃO (arrastar pontos de controle)
 // ============================================================
-function mousePressedCena6() {
+function mousePressedCena7() {
   let wx = mouseX - width / 2;
   let wy = mouseY - height / 2;
-  cena6.arrastando = -1;
-  for (let i = 0; i < cena6.pontos.length; i++) {
-    if (dist(wx, wy, cena6.pontos[i].x, cena6.pontos[i].y) <= cena6.raioPonto + 8) {
-      cena6.arrastando = i;
+  cena7.arrastando = -1;
+  for (let i = 0; i < cena7.pontos.length; i++) {
+    if (dist(wx, wy, cena7.pontos[i].x, cena7.pontos[i].y) <= cena7.raioPonto + 8) {
+      cena7.arrastando = i;
       break;
     }
   }
 }
 
-function mouseDraggedCena6() {
-  if (cena6.arrastando >= 0) {
-    cena6.pontos[cena6.arrastando].x = mouseX - width / 2;
-    cena6.pontos[cena6.arrastando].y = mouseY - height / 2;
+function mouseDraggedCena7() {
+  if (cena7.arrastando >= 0) {
+    cena7.pontos[cena7.arrastando].x = mouseX - width / 2;
+    cena7.pontos[cena7.arrastando].y = mouseY - height / 2;
   }
 }
 
-function mouseReleasedCena6() {
-  cena6.arrastando = -1;
+function mouseReleasedCena7() {
+  cena7.arrastando = -1;
 }
 
 // ============================================================
 // HUD
 // ============================================================
-function getHUDCena6() {
+function getHUDCena7() {
   let lines = [];
-  lines.push("CENA 6: Curvas de Bézier");
+  lines.push("CENA 7: Curvas de Bézier");
   lines.push("");
   lines.push("Pontos de controle: 4 (curva cúbica)");
   lines.push("Avaliação: Bernstein + De Casteljau");
-  lines.push("t (De Casteljau): " + cena6.tAtual.toFixed(2));
+  lines.push("t (De Casteljau): " + cena7.tAtual.toFixed(2));
   lines.push("");
   lines.push("▶ Arraste os pontos vermelhos (P0…P3)");
   lines.push("▶ Curva azul = B(t), t∈[0,1] (base de Bernstein)");
