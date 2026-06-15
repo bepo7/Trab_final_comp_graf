@@ -1,8 +1,12 @@
 // Normal Mapping Fragment Shader (WebGL 1 / GLSL ES 1.0)
-// Constrói a matriz TBN usando derivadas e perturba as normais com um normal map
-// para criar relevo visual sem alterar a geometria.
+// Constrói a matriz TBN ANALITICAMENTE a partir da normal matrix —
+// sem depender de dFdx/dFdy (GL_OES_standard_derivatives), que não
+// está disponível em todos os contextos WebGL.
+//
+// Funciona perfeitamente para superfícies planas (plane()), que é o
+// caso da parede de tijolos. Para meshes curvos precisaríamos de
+// tangentes por vértice ou da extensão de derivadas.
 
-#extension GL_OES_standard_derivatives : enable
 precision highp float;
 
 varying vec3 vPosition;
@@ -10,48 +14,38 @@ varying vec3 vNormal;
 varying vec2 vTexCoord;
 
 uniform sampler2D uNormalMap;
-uniform sampler2D uColorMap;  // Textura de cor (albedo) do material
-uniform vec3 uLightPos;       // Posição da luz em view space
-uniform vec3 uLightColor;     // Cor da luz
-uniform vec3 uAmbientColor;   // Cor ambiente
-uniform float uBumpStrength;  // Intensidade do bump (0.0 - 2.0)
-uniform float uShininess;     // Expoente especular de Phong
-uniform float uSpecStrength;  // Intensidade do especular (tijolo é fosco)
-uniform bool uUseBump;        // Toggle: normal map ativo?
+uniform sampler2D uColorMap;
+uniform vec3 uLightPos;
+uniform vec3 uLightColor;
+uniform vec3 uAmbientColor;
+uniform float uBumpStrength;
+uniform float uShininess;
+uniform float uSpecStrength;
+uniform float uUseBump;       // 1.0 = ativo, 0.0 = desligado
 
-// Constrói a matriz TBN usando derivadas parciais da posição e UV
-// ("cotangent frame" de Schüler — Normal Mapping Without Precomputed
-// Tangents). Não requer atributos de tangente pré-calculados e dispensa
-// dividir pelo determinante das derivadas de UV: por pixel esse det é
-// minúsculo (~1e-6, UV 0..1 esticado sobre centenas de pixels), então
-// qualquer guard "det > eps" zera tudo e mata o relevo. Aqui o sistema
-// linear é resolvido com produtos vetoriais e só a ESCALA comum de T/B
-// é normalizada no final — a direção (e a quiralidade) fica correta.
-mat3 computeTBN() {
-  vec3 dp1 = dFdx(vPosition);
-  vec3 dp2 = dFdy(vPosition);
-  vec2 duv1 = dFdx(vTexCoord);
-  vec2 duv2 = dFdy(vTexCoord);
-
-  vec3 N = normalize(vNormal);
-
-  // Covetores perpendiculares: dp2perp ⟂ {dp2, N}, dp1perp ⟂ {N, dp1}
-  vec3 dp2perp = cross(dp2, N);
-  vec3 dp1perp = cross(N, dp1);
-
-  // T acompanha o gradiente de u, B o gradiente de v (em view space)
-  vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
-  vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
-
-  // Normalização invariante: preserva a razão T/B (anisotropia do UV)
-  float invmax = inversesqrt(max(dot(T, T), max(dot(B, B), 1e-12)));
-  return mat3(T * invmax, B * invmax, N);
-}
+// A normal matrix transforma vetores do object space para o view space.
+// Para um plane() do p5.js, o objeto está no plano XY com UV mapeado
+// ao longo de X (tangente) e Y (bitangente). Então:
+//   T_view = normalize(uNormalMatrix * vec3(1,0,0))
+//   B_view = normalize(uNormalMatrix * vec3(0,1,0))
+//   N_view = normalize(vNormal)
+uniform mat3 uNormalMatrix;
 
 void main() {
   vec3 N = normalize(vNormal);
 
-  if (uUseBump) {
+  if (uUseBump > 0.5) {
+    // Tangente e bitangente analíticas (colunas da normal matrix)
+    vec3 T = normalize(uNormalMatrix * vec3(1.0, 0.0, 0.0));
+    vec3 B = normalize(uNormalMatrix * vec3(0.0, 1.0, 0.0));
+
+    // Garantir ortonormalidade: re-ortogonalizar B em relação a N e T
+    // (Gram-Schmidt) — robusto caso a matrix tenha escala não-uniforme
+    T = normalize(T - dot(T, N) * N);
+    B = cross(N, T);
+
+    mat3 TBN = mat3(T, B, N);
+
     // Amostrar o normal map: valores em [0,1] → converter para [-1,1]
     vec3 normalMapSample = texture2D(uNormalMap, vTexCoord).rgb;
     vec3 tangentNormal = normalMapSample * 2.0 - 1.0;
@@ -61,14 +55,13 @@ void main() {
     tangentNormal = normalize(tangentNormal);
 
     // Transformar do espaço tangente para view space
-    mat3 TBN = computeTBN();
     N = normalize(TBN * tangentNormal);
   }
 
-  // === Iluminação Phong ===
+  // === Iluminação Blinn-Phong ===
   vec3 L = normalize(uLightPos - vPosition);
   vec3 V = normalize(-vPosition); // Em view space, câmera está na origem
-  vec3 R = reflect(-L, N);
+  vec3 H = normalize(L + V);      // Half-vector (Blinn)
 
   // Componente ambiente
   vec3 ambient = uAmbientColor * 0.15;
@@ -77,8 +70,8 @@ void main() {
   float diff = max(dot(N, L), 0.0);
   vec3 diffuse = uLightColor * diff * 0.7;
 
-  // Componente especular (Phong)
-  float spec = pow(max(dot(R, V), 0.0), uShininess);
+  // Componente especular (Blinn-Phong)
+  float spec = pow(max(dot(N, H), 0.0), uShininess);
   vec3 specular = uLightColor * spec * uSpecStrength;
 
   // Cor base do material: amostrada da textura de cor (albedo)

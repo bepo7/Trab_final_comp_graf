@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.1/p5.min.js"></script>
+<script>
+let myShader, myImg, myGfx;
+
+function preload() {
+  myShader = loadShader('shaders/normalmap.vert', 'shaders/normalmap.frag',
+    () => console.log('Shader loaded OK'),
+    (e) => console.error('Shader FAIL:', e)
+  );
+}
+
+function setup() {
+  createCanvas(600, 400, WEBGL);
+  pixelDensity(1);
+
+  // Test 1: createImage
+  myImg = createImage(64, 64);
+  myImg.loadPixels();
+  for (let i = 0; i < myImg.pixels.length; i += 4) {
+    myImg.pixels[i] = 200;     // R
+    myImg.pixels[i+1] = 80;    // G
+    myImg.pixels[i+2] = 50;    // B
+    myImg.pixels[i+3] = 255;   // A
+  }
+  myImg.updatePixels();
+
+  // Test 2: createGraphics
+  myGfx = createGraphics(64, 64);
+  myGfx.pixelDensity(1);
+  myGfx.background(200, 80, 50);
+
+  console.log('myImg type:', myImg.constructor.name);
+  console.log('myGfx type:', myGfx.constructor.name);
+  console.log('Shader type:', myShader ? myShader.constructor.name : 'null');
+  
+  // Check shader uniforms
+  if (myShader && myShader._glProgram) {
+    let gl = drawingContext;
+    let numUniforms = gl.getProgramParameter(myShader._glProgram, gl.ACTIVE_UNIFORMS);
+    console.log('Shader has', numUniforms, 'active uniforms:');
+    for (let i = 0; i < numUniforms; i++) {
+      let info = gl.getActiveUniform(myShader._glProgram, i);
+      console.log('  ', info.name, '- type:', info.type);
+    }
+  }
+}
+
+function draw() {
+  background(30);
+  
+  // Test A: normal texture() with createImage
+  push();
+  translate(-150, 0, 0);
+  texture(myImg);
+  noStroke();
+  plane(100, 100);
+  pop();
+  
+  // Test B: shader + setUniform with createImage
+  push();
+  translate(0, 0, 0);
+  if (myShader) {
+    shader(myShader);
+    myShader.setUniform('uColorMap', myImg);
+    myShader.setUniform('uNormalMap', myImg);
+    myShader.setUniform('uLightPos', [100, -100, 200]);
+    myShader.setUniform('uLightColor', [1, 1, 1]);
+    myShader.setUniform('uAmbientColor', [0.3, 0.3, 0.3]);
+    myShader.setUniform('uBumpStrength', 1.0);
+    myShader.setUniform('uShininess', 16.0);
+    myShader.setUniform('uSpecStrength', 0.1);
+    myShader.setUniform('uUseBump', 0.0);
+    noStroke();
+    plane(100, 100);
+    resetShader();
+  }
+  pop();
+
+  // Test C: shader + setUniform with createGraphics
+  push();
+  translate(150, 0, 0);
+  if (myShader) {
+    shader(myShader);
+    myShader.setUniform('uColorMap', myGfx);
+    myShader.setUniform('uNormalMap', myGfx);
+    myShader.setUniform('uLightPos', [100, -100, 200]);
+    myShader.setUniform('uLightColor', [1, 1, 1]);
+    myShader.setUniform('uAmbientColor', [0.3, 0.3, 0.3]);
+    myShader.setUniform('uBumpStrength', 1.0);
+    myShader.setUniform('uShininess', 16.0);
+    myShader.setUniform('uSpecStrength', 0.1);
+    myShader.setUniform('uUseBump', 0.0);
+    noStroke();
+    plane(100, 100);
+    resetShader();
+  }
+  pop();
+  
+  noLoop();
+}
+</script>
+</head>
+<body></body>
+</html>

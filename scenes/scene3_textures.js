@@ -19,7 +19,7 @@
 // ============================================================
 
 let cena3 = {
-  bumpAtivo: true,            // Normal Mapping da parede ativo
+  bumpAtivo: false,           // Normal Mapping da parede (inicia desligado)
   filtroLinear: true,         // true=LINEAR, false=NEAREST (quadro)
   globoGira: true,            // Rotação do globo
   luzAng: 0,                  // Ângulo da luz orbital
@@ -62,8 +62,9 @@ function setupCena3() {
  * [-1,1] para [0,255]. É o método clássico de "height → normal".
  */
 function normalDaHeight(hgt, W, H, forca) {
-  let img = createImage(W, H);
-  img.loadPixels();
+  // Passo 1: preencher os pixels num createImage (endereçamento 1:1)
+  let raw = createImage(W, H);
+  raw.loadPixels();
   for (let y = 0; y < H; y++) {
     let ym = Math.max(y - 1, 0) * W, yp = Math.min(y + 1, H - 1) * W, yy = y * W;
     for (let x = 0; x < W; x++) {
@@ -73,14 +74,21 @@ function normalDaHeight(hgt, W, H, forca) {
       let nx = -dx, ny = -dy, nz = 1.0;
       let inv = 1 / Math.sqrt(nx * nx + ny * ny + nz * nz);
       let i = 4 * (yy + x);
-      img.pixels[i] = Math.round((nx * inv * 0.5 + 0.5) * 255);
-      img.pixels[i + 1] = Math.round((ny * inv * 0.5 + 0.5) * 255);
-      img.pixels[i + 2] = Math.round((nz * inv * 0.5 + 0.5) * 255);
-      img.pixels[i + 3] = 255;
+      raw.pixels[i]     = Math.round((nx * inv * 0.5 + 0.5) * 255);
+      raw.pixels[i + 1] = Math.round((ny * inv * 0.5 + 0.5) * 255);
+      raw.pixels[i + 2] = Math.round((nz * inv * 0.5 + 0.5) * 255);
+      raw.pixels[i + 3] = 255;
     }
   }
-  img.updatePixels();
-  return img;
+  raw.updatePixels();
+
+  // Passo 2: desenhar a imagem num createGraphics — o p5.js só promove
+  // a textura GL de um canvas que foi "desenhado". Sem isso, setUniform
+  // com shader customizado recebe uma textura vazia.
+  let g = createGraphics(W, H);
+  g.pixelDensity(1);
+  g.image(raw, 0, 0, W, H);
+  return g;
 }
 
 /**
@@ -107,8 +115,9 @@ function gerarTexturasParede() {
   }
 
   let hgt = new Float32Array(W * H);
-  let cor = createImage(W, H);
-  cor.loadPixels();
+  // Passo 1: preencher pixels num createImage (endereçamento 1:1, sem pixel density)
+  let rawCor = createImage(W, H);
+  rawCor.loadPixels();
 
   for (let y = 0; y < H; y++) {
     let row = Math.floor(y / BH);
@@ -145,15 +154,19 @@ function gerarTexturasParede() {
         r *= fator; g *= fator; b *= fator;
       }
       let i = 4 * (y * W + x);
-      cor.pixels[i] = constrain(Math.round(r), 0, 255);
-      cor.pixels[i + 1] = constrain(Math.round(g), 0, 255);
-      cor.pixels[i + 2] = constrain(Math.round(b), 0, 255);
-      cor.pixels[i + 3] = 255;
+      rawCor.pixels[i]     = constrain(Math.round(r), 0, 255);
+      rawCor.pixels[i + 1] = constrain(Math.round(g), 0, 255);
+      rawCor.pixels[i + 2] = constrain(Math.round(b), 0, 255);
+      rawCor.pixels[i + 3] = 255;
     }
   }
-  cor.updatePixels();
+  rawCor.updatePixels();
 
-  cena3.texParedeCor = cor;
+  // Passo 2: transferir para createGraphics via draw (garante GL texture válida)
+  let corGfx = createGraphics(W, H);
+  corGfx.pixelDensity(1);
+  corGfx.image(rawCor, 0, 0, W, H);
+  cena3.texParedeCor = corGfx;
   cena3.texParedeNormal = normalDaHeight(hgt, W, H, 6.0);
 }
 
@@ -428,7 +441,7 @@ function drawCena3() {
     s.setUniform('uBumpStrength', 1.0);
     s.setUniform('uShininess', 16.0);
     s.setUniform('uSpecStrength', 0.12);
-    s.setUniform('uUseBump', cena3.bumpAtivo);
+    s.setUniform('uUseBump', cena3.bumpAtivo ? 1.0 : 0.0);
     plane(width * C3.paredeFator, height * C3.paredeFator);
     resetShader(); // obrigatório: os demais objetos usam o pipeline p5
   } else {

@@ -11,12 +11,12 @@
 //   • d < EPS → HIT; t > MAX_DIST ou MAX_STEPS → MISS.
 // [F] compara com a marcha de PASSO FIXO (amostras equiespaçadas):
 // gasta mais amostras e ainda atravessa a superfície ao detectar.
-// Obstáculos arrastáveis; o mouse mira o raio. Tudo em coordenadas
-// de PIXEL (EPS/MAX em px), num plano 2D frontal (ortho).
+// Obstáculos arrastáveis. O mouse mira o raio, [B] para ATIRAR.
+// Tudo em coordenadas de PIXEL (EPS/MAX em px), num plano 2D frontal.
 // ============================================================
 
-const C6_EPS = 1.5;        // critério de HIT (px) — escala de pixels
-const C6_MAX_STEPS = 30;   // limite de passos do sphere tracing
+const C6_EPS = 2.5;        // critério de HIT (px) — escala de pixels
+const C6_MAX_STEPS = 40;   // limite de passos do sphere tracing
 const C6_FIXO_DT = 28;     // espaçamento da marcha de passo fixo (px)
 
 let cena6 = {
@@ -41,10 +41,11 @@ let cena6 = {
   // Animação (revela 1 passo a cada framesPorPasso; segura e reinicia)
   passoVisivel: 0,
   animTimer: 0,
-  framesPorPasso: 16,
+  framesPorPasso: 30,  // ~0.5s por passo a 60 fps
   holdFrames: 80,
   pausado: false,
   comparaFixo: false,
+  atirou: false,
 
   ui: { portal: null },       // retângulo do portal em coords de TELA
   _lastW: 0, _lastH: 0,
@@ -126,6 +127,8 @@ function c6_recomputePath() {
     let d = c6_sdScene(px, py);
     cena6.passos.push({ x: px, y: py, d: d, t: t });
     if (d < C6_EPS) {
+      // HIT: d está dentro da tolerância (inclui d ≤ 0, ou seja,
+      // o raio já penetrou a superfície — overshoot do passo anterior).
       cena6.resultado = 'hit';
       cena6.hitPonto = { x: px, y: py };
       break;
@@ -161,18 +164,7 @@ function drawCena6() {
   // (uma causa de mudança por vez: a marcha reage só ao obstáculo).
   if (cena6.arrastando < 0 && !(mouseX === 0 && mouseY === 0)) {
     let wx = mouseX - width / 2, wy = mouseY - height / 2;
-    if (wx !== cena6.mira.x || wy !== cena6.mira.y) {
-      cena6.mira = { x: wx, y: wy };
-      let vx = wx - cena6.origem.x, vy = wy - cena6.origem.y;
-      let l = Math.hypot(vx, vy);
-      if (l > 8) { // evita direção degenerada com o mouse sobre a origem
-        let ndx = vx / l, ndy = vy / l;
-        if (ndx !== cena6.dir.x || ndy !== cena6.dir.y) {
-          cena6.dir = { x: ndx, y: ndy };
-          cena6.caminhoSujo = true;
-        }
-      }
-    }
+    cena6.mira = { x: wx, y: wy };
   }
 
   if (cena6.caminhoSujo) {
@@ -181,7 +173,7 @@ function drawCena6() {
   }
 
   // Animação passo-a-passo em loop
-  if (!cena6.pausado) {
+  if (cena6.atirou && !cena6.pausado) {
     cena6.animTimer++;
     if (cena6.passoVisivel < cena6.passos.length) {
       if (cena6.animTimer >= cena6.framesPorPasso) {
@@ -189,6 +181,9 @@ function drawCena6() {
         cena6.animTimer = 0;
       }
     } else if (cena6.animTimer >= cena6.holdFrames) {
+      // Quando termina, ao invés de recomeçar em loop,
+      // apaga o raio e espera o próximo tiro.
+      cena6.atirou = false;
       cena6.passoVisivel = 0;
       cena6.animTimer = 0;
     }
@@ -247,18 +242,24 @@ function drawCena6() {
   }
 
   // --- Raio-guia completo (fraco): a direção mirada pelo mouse ---
-  let fimX = cena6.origem.x + cena6.dir.x * cena6.maxDist;
-  let fimY = cena6.origem.y + cena6.dir.y * cena6.maxDist;
-  stroke(255, 220, 70, 45);
-  strokeWeight(1);
-  line(cena6.origem.x, cena6.origem.y, fimX, fimY);
+  let vx = cena6.mira.x - cena6.origem.x;
+  let vy = cena6.mira.y - cena6.origem.y;
+  let vl = Math.hypot(vx, vy);
+  let fimX = cena6.origem.x + (vx / vl) * cena6.maxDist;
+  let fimY = cena6.origem.y + (vy / vl) * cena6.maxDist;
+  if (vl > 8) {
+    stroke(255, 220, 70, 45);
+    strokeWeight(1);
+    line(cena6.origem.x, cena6.origem.y, fimX, fimY);
+  }
 
   // --- Círculos de passo (as "esferas" do sphere tracing) ---
-  let k = cena6.passoVisivel;
+  if (cena6.atirou) {
+    let k = cena6.passoVisivel;
   noFill();
   for (let i = 0; i < k; i++) {
     let p = cena6.passos[i];
-    if (p.d <= 0) continue;
+    if (p.d <= 0) continue; // não desenha círculo p/ SDF negativa (overshoot)
     let raio = Math.min(p.d, cena6.raioVisualMax);
     let clampado = (p.d > cena6.raioVisualMax);
     // mais antigo apagado → mais recente brilhante
@@ -298,21 +299,22 @@ function drawCena6() {
     }
   }
 
-  // --- Resultado (quando a animação revelou o caminho inteiro) ---
-  if (k === cena6.passos.length && cena6.passos.length > 0) {
-    let ult = cena6.passos[cena6.passos.length - 1];
-    if (cena6.resultado === 'hit') {
-      let pulso = 1 + 0.18 * Math.sin(frameCount * 0.15);
-      noStroke();
-      fill(60, 255, 120, 90); circle(cena6.hitPonto.x, cena6.hitPonto.y, 30 * pulso);
-      fill(80, 255, 140); circle(cena6.hitPonto.x, cena6.hitPonto.y, 12);
-    } else {
-      noFill();
-      stroke(255, 90, 90, 230);
-      strokeWeight(2);
-      circle(ult.x, ult.y, 18);
+    // --- Resultado (quando a animação revelou o caminho inteiro) ---
+    if (k === cena6.passos.length && cena6.passos.length > 0) {
+      let ult = cena6.passos[cena6.passos.length - 1];
+      if (cena6.resultado === 'hit') {
+        let pulso = 1 + 0.18 * Math.sin(frameCount * 0.15);
+        noStroke();
+        fill(60, 255, 120, 90); circle(cena6.hitPonto.x, cena6.hitPonto.y, 30 * pulso);
+        fill(80, 255, 140); circle(cena6.hitPonto.x, cena6.hitPonto.y, 12);
+      } else {
+        noFill();
+        stroke(255, 90, 90, 230);
+        strokeWeight(2);
+        circle(ult.x, ult.y, 18);
+      }
     }
-  }
+  } // fim if (cena6.atirou)
 
   // --- Origem: a "câmera" que lança o raio ---
   push();
@@ -379,7 +381,7 @@ function mousePressedCena6() {
       return;
     }
   }
-  // 3) Clique vazio: nada — a mira já segue o mouse passivamente
+  // 3) Clique no fundo: sem ação (o raio é atirado pela tecla B)
 }
 
 function mouseDraggedCena6() {
@@ -394,9 +396,21 @@ function mouseReleasedCena6() {
   cena6.arrastando = -1;
 }
 
-// [espaço] pausa/retoma · [N] avança 1 passo (pausado) · [F] passo fixo
+// [B] atira o raio · [Espaço] pausa/retoma · [N] avança 1 passo (pausado) · [F] passo fixo
 function keyPressedCena6() {
-  if (key === ' ') {
+  if (key === 'b' || key === 'B') {
+    // ATIRAR o raio na direção da mira atual
+    let wx = cena6.mira.x, wy = cena6.mira.y;
+    let vx = wx - cena6.origem.x, vy = wy - cena6.origem.y;
+    let l = Math.hypot(vx, vy);
+    if (l > 8) {
+      cena6.dir = { x: vx / l, y: vy / l };
+      cena6.caminhoSujo = true;
+      cena6.passoVisivel = 0;
+      cena6.animTimer = 0;
+      cena6.atirou = true;
+    }
+  } else if (key === ' ') {
     cena6.pausado = !cena6.pausado;
   } else if (key === 'n' || key === 'N') {
     if (cena6.pausado) {
@@ -428,7 +442,9 @@ function getHUDCena6() {
     " · MAX_DIST: " + Math.round(cena6.maxDist) + " px");
 
   let status;
-  if (k < n) {
+  if (!cena6.atirou) {
+    status = "Aguardando — pressione [B] para atirar";
+  } else if (k < n) {
     status = "marchando…";
   } else if (cena6.resultado === 'hit') {
     let ult = cena6.passos[n - 1];
@@ -448,7 +464,8 @@ function getHUDCena6() {
   }
 
   lines.push("");
-  lines.push("▶ Mouse: mira o raio · Arraste um obstáculo para movê-lo");
+  lines.push("▶ Mouse: mira o raio · [B] ATIRA o raio na direção da mira");
+  lines.push("▶ Arraste um obstáculo para movê-lo");
   lines.push("▶ [Espaço] pausa · [N] passo a passo (pausado) · [F] passo fixo");
   lines.push("▶ Círculo ciano = distância segura dada pela SDF (passo variável)");
   lines.push("▶ Clique na seta verde (dir.) ou [→]: portal → Cena 7");
